@@ -159,7 +159,7 @@
     },
     {
       "id": "order-lines",
-      "version": "4.1",
+      "version": "4.2",
       "handlers": [
         {
           "methods": [
@@ -1385,7 +1385,7 @@
     },
     {
       "id": "orders-storage.po-lines",
-      "version": "13.1"
+      "version": "13.2"
     },
     {
       "id": "orders-storage.order-templates",
