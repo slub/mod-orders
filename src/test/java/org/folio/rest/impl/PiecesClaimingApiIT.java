@@ -13,17 +13,22 @@ import org.folio.rest.jaxrs.model.ClaimingPieceResult;
 import org.folio.rest.jaxrs.model.ClaimingResults;
 import org.folio.rest.jaxrs.model.PoLine;
 import org.folio.rest.jaxrs.model.Piece;
+import org.folio.rest.acq.model.ClaimSequence;
+import org.folio.rest.acq.model.ClaimSequenceStage;
 import org.folio.rest.jaxrs.model.PieceCollection;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Stream;
@@ -45,6 +50,7 @@ import static org.folio.models.claiming.IntegrationDetailField.CLAIM_PIECE_IDS;
 import static org.folio.models.claiming.IntegrationDetailField.EXPORT_TYPE_SPECIFIC_PARAMETERS;
 import static org.folio.models.claiming.IntegrationDetailField.JOB_ID;
 import static org.folio.models.claiming.IntegrationDetailField.VENDOR_EDI_ORDERS_EXPORT_CONFIG;
+import static org.folio.orders.utils.ResourcePathResolver.CLAIM_SEQUENCES;
 import static org.folio.orders.utils.ResourcePathResolver.ORGANIZATION_STORAGE;
 import static org.folio.orders.utils.ResourcePathResolver.PIECES_STORAGE;
 import static org.folio.orders.utils.ResourcePathResolver.PO_LINES_STORAGE;
@@ -56,6 +62,7 @@ import static org.folio.rest.impl.MockServer.PO_LINES_COLLECTION;
 import static org.folio.rest.impl.MockServer.addMockEntry;
 import static org.folio.rest.impl.MockServer.getDataExportSpringJobCreations;
 import static org.folio.rest.impl.MockServer.getOrganizationSearches;
+import static org.folio.rest.impl.MockServer.getPieceBatchClaims;
 import static org.folio.rest.impl.MockServer.getPieceBatchUpdates;
 import static org.folio.rest.impl.MockServer.getPieceSearches;
 import static org.folio.rest.impl.MockServer.getPoLineSearches;
@@ -239,5 +246,52 @@ public class PiecesClaimingApiIT {
       assertThat(parameters.getJsonObject(0).getValue("value"), is(piece.getId()));
       assertThat(parameters.getJsonObject(1).getValue("value"), is("AMAZ"));
     }
+  }
+
+  @Test
+  void testPostPiecesClaimWithClaimSequence() {
+    var claimSequence = new ClaimSequence()
+      .withId(UUID.randomUUID().toString())
+      .withName("Claim sequence")
+      .withIsActive(true)
+      .withStages(List.of(
+        new ClaimSequenceStage().withStage(1).withName("First claim").withInterval(14),
+        new ClaimSequenceStage().withStage(2).withName("Second claim").withInterval(28)));
+    var organization = getMockAsJson(ORGANIZATION_COLLECTION)
+      .getJsonArray(ORGANIZATIONS_KEY).getJsonObject(0)
+      .mapTo(Organization.class);
+    var poLine = getMockAsJson(PO_LINES_COLLECTION)
+      .getJsonArray(PO_LINES_KEY).getJsonObject(17)
+      .mapTo(PoLine.class)
+      .withClaimSequenceId(claimSequence.getId());
+    var purchaseOrder = getMinimalOrder(poLine)
+      .withVendor(organization.getId());
+    var piece = getMockAsJson(PIECES_COLLECTION)
+      .getJsonArray(PIECES_KEY).getJsonObject(69)
+      .mapTo(Piece.class);
+
+    addMockEntry(ORGANIZATION_STORAGE, organization);
+    addMockEntry(PURCHASE_ORDER_STORAGE, purchaseOrder);
+    addMockEntry(PO_LINES_STORAGE, poLine);
+    addMockEntry(PIECES_STORAGE, piece);
+    addMockEntry(CLAIM_SEQUENCES, claimSequence);
+
+    var request = getMockAsJson(BASE_MOCK_DATA_PATH + CLAIMING_MOCK_DATA_FOLDER + "send-claims-1-piece-1-vendor-1-job.json")
+      .mapTo(ClaimingCollection.class);
+    verifyPostResponse(PIECES_CLAIMING_ENDPOINT, JsonObject.mapFrom(request).encode(),
+      prepareHeaders(EXIST_CONFIG_X_OKAPI_TENANT_LIMIT_10_CLAIMS), APPLICATION_JSON, CREATED.code());
+
+    // A PO line with a claim sequence is written through the claims endpoint only, with stage 1 and its interval
+    assertThat(getPieceBatchUpdates(), is(nullValue()));
+    var pieceClaims = getPieceBatchClaims();
+    assertThat(pieceClaims, hasSize(1));
+    var claimedPiece = pieceClaims.getFirst().getJsonArray("pieceClaims").getJsonObject(0)
+      .getJsonObject("piece").mapTo(Piece.class);
+    assertThat(claimedPiece.getId(), is(piece.getId()));
+    assertThat(claimedPiece.getReceivingStatus(), is(Piece.ReceivingStatus.CLAIM_SENT));
+    assertThat(claimedPiece.getClaimSequence().getId(), is(claimSequence.getId()));
+    assertThat(claimedPiece.getClaimSequence().getStage(), is(1));
+    assertThat(claimedPiece.getClaimingInterval(), is(14));
+    assertThat(getDataExportSpringJobCreations(), hasSize(1));
   }
 }

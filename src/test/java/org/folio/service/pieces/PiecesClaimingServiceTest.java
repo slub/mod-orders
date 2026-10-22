@@ -8,6 +8,7 @@ import io.vertx.junit5.VertxTestContext;
 import org.folio.CopilotGenerated;
 import org.folio.rest.acq.model.Organization;
 import org.folio.rest.core.RestClient;
+import org.folio.rest.core.exceptions.ErrorCodes;
 import org.folio.rest.core.exceptions.HttpException;
 import org.folio.rest.core.models.RequestContext;
 import org.folio.rest.jaxrs.model.ClaimingCollection;
@@ -51,10 +52,15 @@ import static org.folio.rest.core.exceptions.ErrorCodes.CANNOT_FIND_PIECES_WITH_
 import static org.folio.rest.core.exceptions.ErrorCodes.CANNOT_RETRIEVE_CONFIG_ENTRIES;
 import static org.folio.rest.core.exceptions.ErrorCodes.CANNOT_SEND_CLAIMS_PIECE_IDS_ARE_EMPTY;
 import static org.folio.rest.core.exceptions.ErrorCodes.UNABLE_TO_GENERATE_CLAIMS_FOR_ORG_NO_INTEGRATION_DETAILS;
+import static org.folio.rest.jaxrs.model.PieceBatchStatusCollection.ReceivingStatus.CLAIM_SENT;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(VertxExtension.class)
@@ -366,6 +372,33 @@ public class PiecesClaimingServiceTest {
         assertEquals(ClaimingPieceResult.Status.SUCCESS, copiedSortedResults.get(3).getStatus());
         assertEquals("pieceId5", copiedSortedResults.get(4).getPieceId());
         assertEquals(ClaimingPieceResult.Status.SUCCESS, copiedSortedResults.get(4).getStatus());
+        // One update for the pieces of both vendors
+        verify(pieceUpdateFlowManager, times(1)).updatePiecesStatuses(
+          argThat(pieceIds -> pieceIds.size() == 5 && pieceIds.containsAll(List.of("pieceId1", "pieceId2", "pieceId3", "pieceId4", "pieceId5"))),
+          eq(CLAIM_SENT), eq(1), any(), any(), any());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void testSendClaims_claimSequenceCompleted_noJobCreated(VertxTestContext testContext) {
+    var claimingCollection = new ClaimingCollection().withClaimingPieceIds(List.of("pieceId1")).withClaimingInterval(1);
+    var exportConfig = createExportConfigs("CLAIMS_vendorId");
+
+    when(restClient.getAsJsonObject(any(), any())).thenReturn(Future.succeededFuture(exportConfig));
+    when(pieceStorageService.getPiecesByIds(any(), any())).thenReturn(Future.succeededFuture(List.of(
+      new Piece().withId("pieceId1").withPoLineId("poLineId1").withReceivingStatus(Piece.ReceivingStatus.LATE))));
+    when(purchaseOrderLineService.getOrderLineById(any(), any())).thenReturn(Future.succeededFuture(new PoLine().withPurchaseOrderId("orderId")));
+    when(purchaseOrderStorageService.getPurchaseOrderById(any(), any())).thenReturn(Future.succeededFuture(new PurchaseOrder().withVendor("vendorId")));
+    when(organizationService.getVendorById(any(), any())).thenReturn(Future.succeededFuture(new Organization().withId("vendorId").withCode("VENDOR").withIsVendor(true)));
+    when(pieceUpdateFlowManager.updatePiecesStatuses(any(), any(), any(), any(), any(), any()))
+      .thenReturn(Future.failedFuture(new HttpException(400, ErrorCodes.CLAIM_SEQUENCE_COMPLETED)));
+
+    piecesClaimingService.sendClaims(claimingCollection, requestContext)
+      .onComplete(testContext.failing(throwable -> testContext.verify(() -> {
+        assertEquals(400, ((HttpException) throwable).getCode());
+        assertEquals(ErrorCodes.CLAIM_SEQUENCE_COMPLETED.getCode(), ((HttpException) throwable).getError().getCode());
+        verify(restClient, never()).post(eq(resourcesPath(DATA_EXPORT_SPRING_CREATE_JOB)), any(), any(), any());
         testContext.completeNow();
       })));
   }

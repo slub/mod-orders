@@ -4,6 +4,7 @@
 * [MODORDERS-1463](https://folio-org.atlassian.net/browse/MODORDERS-1463) - Bump acquisition-methods interfaces to 1.1 for the deprecated flag
 * [MODORDERS-1486](https://folio-org.atlassian.net/browse/MODORDERS-1486) - Order import jobs hanging indefinitely
 * [MODORDSTOR-538](https://folio-org.atlassian.net/browse/MODORDSTOR-538) - Update acq-models for PO line `claimSequenceId`, bump `order-lines` to 4.2 and require `orders-storage.po-lines` 13.2
+* [MODORDERS-1489](https://folio-org.atlassian.net/browse/MODORDERS-1489) - Claim sequences: on `Late` → `Claim sent` (`POST /pieces/claim`, `PUT /orders/pieces-batch/status`) set the next stage in `piece.claimSequence` and the stage interval in `piece.claimingInterval`; 400 `claimSequenceCompleted` after the last stage of a `STOP` sequence; require `orders-storage.pieces` 5.1 and `orders-storage.claim-sequences` 1.0
 
 ### Bug fixes
 * [MODORDSTOR-535](https://folio-org.atlassian.net/browse/MODORDSTOR-535) - PO line cannot be opened after EDIFACT export: update acq-models for `lastExport` and `exportTransmissionMethod`, bump `orders` to 13.1 and `orders.export-history` to 1.1

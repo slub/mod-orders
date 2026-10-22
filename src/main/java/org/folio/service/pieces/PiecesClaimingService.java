@@ -199,10 +199,11 @@ public class PiecesClaimingService {
 
   private Future<List<List<String>>> updatePiecesPerVendor(ClaimingCollection claimingCollection, Map<Organization, List<String>> pieceIdsByVendor,
                                                            RequestContext requestContext) {
-    var updatePiecesFutures = new ArrayList<Future<List<String>>>();
-    pieceIdsByVendor.forEach((vendor, pieceIds) -> updatePiecesFutures.add(updatePieces(claimingCollection, vendor.getId(), pieceIds, requestContext).map(pieceIds)));
-    log.info("updatePiecesPerVendor:: Updating pieces per vendor, total count: {}", updatePiecesFutures.size());
-    return collectResultsOnSuccess(updatePiecesFutures);
+    // One update for all vendors: a piece whose claim sequence is completed rejects the request before any piece is written
+    var pieceIds = pieceIdsByVendor.values().stream().flatMap(Collection::stream).distinct().toList();
+    log.info("updatePiecesPerVendor:: Updating pieces of all vendors, vendors: {}, pieces: {}", pieceIdsByVendor.size(), pieceIds.size());
+    return updatePieces(claimingCollection, pieceIds, requestContext)
+      .map(v -> List.copyOf(pieceIdsByVendor.values()));
   }
 
   private Future<List<Void>> createJobsPerVendorPerIntegrationDetail(JsonObject config, Map<Organization, List<String>> pieceIdsByVendor,
@@ -215,8 +216,7 @@ public class PiecesClaimingService {
     return collectResultsOnSuccess(createJobFutures);
   }
 
-  private Future<Void> updatePieces(ClaimingCollection claimingCollection, String vendorId, List<String> pieceIds, RequestContext requestContext) {
-    log.info("updatePieces:: Updating pieces for vendor, vendorId: {}, pieces: {}", vendorId, pieceIds.size());
+  private Future<Void> updatePieces(ClaimingCollection claimingCollection, List<String> pieceIds, RequestContext requestContext) {
     var claimingInterval = claimingCollection.getClaimingInterval();
     var internalNote = claimingCollection.getInternalNote();
     var externalNote = claimingCollection.getExternalNote();

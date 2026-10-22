@@ -2,8 +2,11 @@ package org.folio.service.pieces;
 
 import org.folio.CopilotGenerated;
 import org.folio.models.pieces.PieceBatchStatusUpdateHolder;
+import org.folio.rest.acq.model.ClaimSequenceStage;
 import org.folio.rest.jaxrs.model.Physical;
 import org.folio.rest.jaxrs.model.Piece;
+import org.folio.rest.jaxrs.model.PieceClaimSequence;
+import org.folio.service.pieces.ClaimSequenceStageResolver.StageResolution;
 import org.folio.rest.jaxrs.model.PoLine;
 import org.folio.rest.jaxrs.model.acq.Location;
 import org.junit.jupiter.api.Test;
@@ -71,6 +74,56 @@ public class PieceUtilTest {
     assertSame(piece.getClaimingInterval(), holder.getClaimingInterval());
     assertEquals(piece.getInternalNote(), holder.getInternalNote());
     assertEquals(piece.getExternalNote(), holder.getExternalNote());
+  }
+
+  @Test
+  void testUpdatePieceStatusWithHolderSetsClaimSequenceStage() {
+    var claimSequenceId = UUID.randomUUID().toString();
+    Piece piece = new Piece().withId(UUID.randomUUID().toString()).withReceivingStatus(Piece.ReceivingStatus.LATE);
+    PieceBatchStatusUpdateHolder holder = new PieceBatchStatusUpdateHolder(Piece.ReceivingStatus.CLAIM_SENT,
+      30, "internal", "external", List.of(piece), UUID.randomUUID().toString());
+    holder.getStageResolutions().put(piece.getId(),
+      StageResolution.next(claimSequenceId, 2, new ClaimSequenceStage().withStage(2).withInterval(45)));
+
+    boolean statusChanged = PieceUtil.updatePieceStatus(piece, holder);
+
+    assertTrue(statusChanged);
+    assertEquals(Piece.ReceivingStatus.CLAIM_SENT, piece.getReceivingStatus());
+    assertEquals(45, piece.getClaimingInterval());
+    assertEquals(claimSequenceId, piece.getClaimSequence().getId());
+    assertEquals(2, piece.getClaimSequence().getStage());
+    assertEquals("internal", piece.getInternalNote());
+  }
+
+  @Test
+  void testUpdatePieceStatusWithHolderKeepsClaimSequenceWhenStatusUnchanged() {
+    var claimSequence = new PieceClaimSequence().withId(UUID.randomUUID().toString()).withStage(1);
+    Piece piece = new Piece().withId(UUID.randomUUID().toString()).withReceivingStatus(Piece.ReceivingStatus.CLAIM_SENT)
+      .withClaimSequence(claimSequence);
+    PieceBatchStatusUpdateHolder holder = new PieceBatchStatusUpdateHolder(Piece.ReceivingStatus.CLAIM_SENT,
+      30, null, null, List.of(piece), UUID.randomUUID().toString());
+    holder.getStageResolutions().put(piece.getId(),
+      StageResolution.next(claimSequence.getId(), 2, new ClaimSequenceStage().withStage(2).withInterval(45)));
+
+    boolean statusChanged = PieceUtil.updatePieceStatus(piece, holder);
+
+    assertFalse(statusChanged);
+    assertSame(claimSequence, piece.getClaimSequence());
+    assertEquals(1, piece.getClaimSequence().getStage());
+    assertEquals(30, piece.getClaimingInterval());
+  }
+
+  @Test
+  void testUpdatePieceStatusWithHolderWithoutStageResolutionKeepsRequestInterval() {
+    Piece piece = new Piece().withId(UUID.randomUUID().toString()).withReceivingStatus(Piece.ReceivingStatus.LATE);
+    PieceBatchStatusUpdateHolder holder = new PieceBatchStatusUpdateHolder(Piece.ReceivingStatus.CLAIM_DELAYED,
+      30, null, null, List.of(piece), UUID.randomUUID().toString());
+
+    boolean statusChanged = PieceUtil.updatePieceStatus(piece, holder);
+
+    assertTrue(statusChanged);
+    assertEquals(30, piece.getClaimingInterval());
+    assertNull(piece.getClaimSequence());
   }
 
   @ParameterizedTest

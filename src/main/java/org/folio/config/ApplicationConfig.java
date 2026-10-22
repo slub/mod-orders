@@ -17,6 +17,7 @@ import org.folio.rest.jaxrs.model.PoLine;
 import org.folio.rest.jaxrs.model.CreateInventoryType;
 import org.folio.service.AcquisitionMethodsService;
 import org.folio.service.AcquisitionsUnitsService;
+import org.folio.service.ClaimSequenceService;
 import org.folio.service.CirculationRequestsRetriever;
 import org.folio.service.ExportHistoryService;
 import org.folio.service.FundsDistributionService;
@@ -495,6 +496,11 @@ public class ApplicationConfig {
   }
 
   @Bean
+  ClaimSequenceService claimSequenceService(RestClient restClient) {
+    return new ClaimSequenceService(restClient);
+  }
+
+  @Bean
   ProtectionService protectionHelper(AcquisitionsUnitsService acquisitionsUnitsService) {
     return new ProtectionService(acquisitionsUnitsService);
   }
@@ -693,9 +699,10 @@ public class ApplicationConfig {
   PieceUpdateFlowManager pieceUpdateFlowManager(PieceStorageService pieceStorageService, PieceService pieceService, TitlesService titlesService,
                                                 ProtectionService protectionService, PieceUpdateFlowPoLineService pieceUpdateFlowPoLineService,
                                                 PieceUpdateFlowInventoryManager pieceUpdateFlowInventoryManager, BasePieceFlowHolderBuilder basePieceFlowHolderBuilder,
-                                                DefaultPieceFlowsValidator defaultPieceFlowsValidator, PurchaseOrderLineService purchaseOrderLineService) {
+                                                DefaultPieceFlowsValidator defaultPieceFlowsValidator, PurchaseOrderLineService purchaseOrderLineService,
+                                                ClaimSequenceService claimSequenceService) {
     return new PieceUpdateFlowManager(pieceStorageService, pieceService, titlesService, protectionService, pieceUpdateFlowPoLineService,
-      pieceUpdateFlowInventoryManager, basePieceFlowHolderBuilder, defaultPieceFlowsValidator, purchaseOrderLineService);
+      pieceUpdateFlowInventoryManager, basePieceFlowHolderBuilder, defaultPieceFlowsValidator, purchaseOrderLineService, claimSequenceService);
   }
 
   @Bean

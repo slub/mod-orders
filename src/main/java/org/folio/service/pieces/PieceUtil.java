@@ -22,6 +22,7 @@ import org.folio.rest.jaxrs.model.PoLine;
 import org.folio.rest.jaxrs.model.Eresource;
 import org.folio.rest.jaxrs.model.Physical;
 import org.folio.rest.jaxrs.model.Piece;
+import org.folio.rest.jaxrs.model.PieceClaimSequence;
 import org.folio.rest.jaxrs.model.acq.Location;
 import org.folio.rest.tools.utils.TenantTool;
 
@@ -109,6 +110,14 @@ public class PieceUtil {
     piece.setClaimingInterval(holder.getClaimingInterval());
     piece.setInternalNote(holder.getInternalNote());
     piece.setExternalNote(holder.getExternalNote());
+    var stageResolution = holder.getStageResolutions().get(piece.getId());
+    if (isStatusChanged && stageResolution != null && !stageResolution.isCompleted()) {
+      // The claim sequence wins over the requested interval
+      piece.setClaimSequence(new PieceClaimSequence()
+        .withId(stageResolution.claimSequenceId())
+        .withStage(stageResolution.stageNumber()));
+      piece.setClaimingInterval(stageResolution.stage().getInterval());
+    }
     return isStatusChanged;
   }
 

@@ -7,6 +7,7 @@ import static org.folio.orders.utils.QueryUtils.convertIdsToCqlQuery;
 import static org.folio.orders.utils.QueryUtils.getCqlExpressionForFieldNullValue;
 import static org.folio.orders.utils.ResourcePathResolver.PIECES_STORAGE;
 import static org.folio.orders.utils.ResourcePathResolver.PIECES_STORAGE_BATCH;
+import static org.folio.orders.utils.ResourcePathResolver.PIECES_STORAGE_BATCH_CLAIMS;
 import static org.folio.orders.utils.ResourcePathResolver.resourcesPath;
 import static org.folio.rest.RestConstants.MAX_IDS_FOR_GET_RQ_15;
 
@@ -30,6 +31,8 @@ import org.folio.rest.jaxrs.model.Piece;
 import org.folio.rest.jaxrs.model.PieceCollection;
 
 import io.vertx.core.Future;
+import io.vertx.core.json.JsonArray;
+import io.vertx.core.json.JsonObject;
 import org.folio.rest.tools.utils.TenantTool;
 import org.folio.service.consortium.ConsortiumUserTenantsRetriever;
 import org.folio.service.consortium.ConsortiumConfigurationService;
@@ -45,6 +48,7 @@ public class PieceStorageService {
   private static final String PIECE_STORAGE_ENDPOINT = resourcesPath(PIECES_STORAGE);
   private static final String PIECE_STORAGE_BY_ID_ENDPOINT = PIECE_STORAGE_ENDPOINT + "/{id}";
   private static final String PIECES_STORAGE_BATCH_ENDPOINT = resourcesPath(PIECES_STORAGE_BATCH);
+  private static final String PIECES_STORAGE_BATCH_CLAIMS_ENDPOINT = resourcesPath(PIECES_STORAGE_BATCH_CLAIMS);
 
   private final ConsortiumConfigurationService consortiumConfigurationService;
   private final ConsortiumUserTenantsRetriever consortiumUserTenantsRetriever;
@@ -102,6 +106,19 @@ public class PieceStorageService {
   public Future<Void> updatePiecesBatch(PieceCollection pieceCollection, RequestContext requestContext) {
     RequestEntry requestEntry = new RequestEntry(PIECES_STORAGE_BATCH_ENDPOINT);
     return restClient.put(requestEntry, pieceCollection, requestContext);
+  }
+
+  /**
+   * Saves pieces together with their claim sequence state. Unlike {@link #updatePiecesBatch}, storage writes
+   * {@code piece.claimSequence} as sent (an absent state clears the stored one), all or nothing.
+   */
+  public Future<Void> updateClaimedPieces(List<Piece> pieces, RequestContext requestContext) {
+    // The generated PieceClaim wraps the storage Piece model, so the payload is built as JSON from the business Piece
+    var pieceClaims = new JsonArray(pieces.stream()
+      .map(piece -> new JsonObject().put("piece", JsonObject.mapFrom(piece)))
+      .toList());
+    var pieceClaimCollection = new JsonObject().put("pieceClaims", pieceClaims).put("totalRecords", pieceClaims.size());
+    return restClient.postEmptyResponse(PIECES_STORAGE_BATCH_CLAIMS_ENDPOINT, pieceClaimCollection, requestContext);
   }
 
   public Future<Piece> insertPiece(Piece piece, RequestContext requestContext) {

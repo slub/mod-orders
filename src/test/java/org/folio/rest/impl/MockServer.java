@@ -81,6 +81,8 @@ import static org.folio.orders.utils.ResourcePathResolver.ORDER_TEMPLATES;
 import static org.folio.orders.utils.ResourcePathResolver.ORGANIZATION_STORAGE;
 import static org.folio.orders.utils.ResourcePathResolver.PIECES_STORAGE;
 import static org.folio.orders.utils.ResourcePathResolver.PIECES_STORAGE_BATCH;
+import static org.folio.orders.utils.ResourcePathResolver.PIECES_STORAGE_BATCH_CLAIMS;
+import static org.folio.orders.utils.ResourcePathResolver.CLAIM_SEQUENCES;
 import static org.folio.orders.utils.ResourcePathResolver.PO_LINES_BATCH_STORAGE;
 import static org.folio.orders.utils.ResourcePathResolver.PO_LINES_STORAGE;
 import static org.folio.orders.utils.ResourcePathResolver.PO_LINE_NUMBER;
@@ -460,6 +462,10 @@ public class MockServer {
     return serverRqRs.get(PIECES_STORAGE_BATCH, HttpMethod.PUT);
   }
 
+  public static List<JsonObject> getPieceBatchClaims() {
+    return serverRqRs.get(PIECES_STORAGE_BATCH_CLAIMS, HttpMethod.POST);
+  }
+
   public static List<JsonObject> getPieceDeletions() {
     return serverRqRs.get(PIECES_STORAGE, HttpMethod.DELETE);
   }
@@ -626,6 +632,7 @@ public class MockServer {
     router.post(resourcesPath(PO_LINES_STORAGE)).handler(this::handlePostPOLine);
     router.post(resourcesPath(PIECES_STORAGE)).handler(ctx -> handlePostGenericSubObj(ctx, PIECES_STORAGE));
     router.post(resourcesPath(PIECES_STORAGE_BATCH)).handler(this::handlePostPiecesBatch);
+    router.post(resourcesPath(PIECES_STORAGE_BATCH_CLAIMS)).handler(this::handlePostPiecesBatchClaims);
     router.post(resourcesPath(ORDER_TEMPLATES)).handler(ctx -> handlePostGenericSubObj(ctx, ORDER_TEMPLATES));
     router.post(resourcesPath(FINANCE_BATCH_TRANSACTIONS)).handler(this::handleBatchTransactions);
     router.post(resourcesPath(TITLES)).handler(ctx -> handlePostGenericSubObj(ctx, TITLES));
@@ -702,6 +709,7 @@ public class MockServer {
     router.get(resourcesPath(TAGS)).handler(ctx -> handleGetGenericSubObj(ctx, TAGS));
     router.get("/invoice/invoice-lines").handler(this::handleGetInvoiceLines);
     router.get(resourcesPath(ACQUISITION_METHODS)).handler(this::handleGetAcquisitionMethods);
+    router.get(resourcesPath(CLAIM_SEQUENCES)).handler(this::handleGetClaimSequences);
     router.get(resourcePath(ACQUISITION_METHODS)).handler(this::handleGetAcquisitionMethod);
     router.get(resourcesPath(EXPORT_HISTORY)).handler(this::handleGetExportHistoryMethod);
     router.get("/data-import-profiles/jobProfileSnapshots/:id").handler(this::handleGetJobProfileSnapshotById);
@@ -2212,6 +2220,25 @@ public class MockServer {
     ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, APPLICATION_JSON)
       .setStatusCode(204)
       .end();
+  }
+
+  private void handlePostPiecesBatchClaims(RoutingContext ctx) {
+    logger.info("handlePostPiecesBatchClaims got: POST {}", ctx.request().path());
+    addServerRqRsData(HttpMethod.POST, PIECES_STORAGE_BATCH_CLAIMS, ctx.body().asJsonObject());
+    ctx.response().setStatusCode(204).end();
+  }
+
+  private void handleGetClaimSequences(RoutingContext ctx) {
+    String query = StringUtils.trimToEmpty(ctx.request().getParam(QUERY));
+    logger.info("handleGetClaimSequences got: {}?query={}", ctx.request().path(), query);
+    addServerRqQuery(CLAIM_SEQUENCES, query);
+    // Mock entries are added by the tests with addMockEntry(CLAIM_SEQUENCES, ...)
+    var claimSequences = getRqRsEntries(HttpMethod.SEARCH, CLAIM_SEQUENCES).stream()
+      .filter(claimSequence -> query.contains(claimSequence.getString(ID)))
+      .toList();
+    var collection = new JsonObject().put("claimSequences", new JsonArray(claimSequences)).put("totalRecords", claimSequences.size());
+    addServerRqRsData(HttpMethod.GET, CLAIM_SEQUENCES, collection);
+    serverResponse(ctx, 200, APPLICATION_JSON, collection.encodePrettily());
   }
 
   private static void addServerRqRsData(HttpMethod method, String objName, JsonObject data) {
