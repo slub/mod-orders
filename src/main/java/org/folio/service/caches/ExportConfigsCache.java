@@ -15,7 +15,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import static org.folio.orders.utils.CacheUtils.buildAsyncCache;
-import static org.folio.orders.utils.ResourcePathResolver.DATA_EXPORT_SPRING_CONFIGURATIONS;
 import static org.folio.orders.utils.ResourcePathResolver.DATA_EXPORT_SPRING_EFFECTIVE_CONFIGS;
 import static org.folio.orders.utils.ResourcePathResolver.resourcesPath;
 
@@ -24,7 +23,6 @@ import static org.folio.orders.utils.ResourcePathResolver.resourcesPath;
 @RequiredArgsConstructor
 public class ExportConfigsCache extends AbstractConfigCache {
 
-  private static final String TYPE_QUERY = "type==%s";
   private static final String VENDOR_ID_PARAMETER = "vendorId";
   private static final String TYPE_PARAMETER = "type";
   private static final String ACQUISITION_METHOD_PARAMETER = "acquisitionMethod";
@@ -44,18 +42,13 @@ public class ExportConfigsCache extends AbstractConfigCache {
     this.configsCache = buildAsyncCache(context, cacheExpirationTime);
   }
 
-  public Future<JsonObject> loadExportConfigs(String exportType, RequestContext requestContext) {
-    return cacheData(resourcesPath(DATA_EXPORT_SPRING_CONFIGURATIONS), TYPE_QUERY.formatted(exportType), configsCache,
-      exportConfigsRetriever::getExportConfigs, byPassCache, requestContext);
-  }
-
   /**
-   * Loads the Claims integrations that apply to a PO line, as a map of config name to config.
+   * Loads the Claims export configs that apply to a PO line, as a map of config id to config.
    *
    * @param vendorId          vendor of the PO line's order
    * @param acquisitionMethod acquisition method of the PO line, null if the PO line has none
    * @param requestContext    Headers to make HTTP requests
-   * @return Future of the matching configs, empty if no integration applies
+   * @return Future of the matching configs, empty if no config applies
    */
   public Future<JsonObject> loadClaimsConfigsForPoLine(String vendorId, String acquisitionMethod, RequestContext requestContext) {
     var requestEntry = new RequestEntry(resourcesPath(DATA_EXPORT_SPRING_EFFECTIVE_CONFIGS))
