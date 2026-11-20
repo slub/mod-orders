@@ -13,16 +13,23 @@ import org.folio.rest.jaxrs.model.ClaimingPieceResult;
 import org.folio.rest.jaxrs.model.ClaimingResults;
 import org.folio.rest.jaxrs.model.PoLine;
 import org.folio.rest.jaxrs.model.Piece;
+import org.folio.rest.jaxrs.model.PieceClaiming;
+import org.folio.rest.jaxrs.model.PieceClaimingSequence;
 import org.folio.rest.jaxrs.model.PieceCollection;
+import org.folio.rest.acq.model.ClaimSequence;
+import org.folio.rest.acq.model.ClaimSequenceStage;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.Collection;
+import java.util.List;
+import java.util.UUID;
 import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
@@ -45,6 +52,8 @@ import static org.folio.models.claiming.IntegrationDetailField.CLAIM_PIECE_IDS;
 import static org.folio.models.claiming.IntegrationDetailField.EXPORT_TYPE_SPECIFIC_PARAMETERS;
 import static org.folio.models.claiming.IntegrationDetailField.JOB_ID;
 import static org.folio.models.claiming.IntegrationDetailField.VENDOR_EDI_ORDERS_EXPORT_CONFIG;
+import static org.folio.orders.utils.ResourcePathResolver.CLAIM_SEQUENCES;
+import static org.folio.orders.utils.ResourcePathResolver.DATA_EXPORT_SPRING_EFFECTIVE_CONFIGS;
 import static org.folio.orders.utils.ResourcePathResolver.ORGANIZATION_STORAGE;
 import static org.folio.orders.utils.ResourcePathResolver.PIECES_STORAGE;
 import static org.folio.orders.utils.ResourcePathResolver.PO_LINES_STORAGE;
@@ -60,9 +69,12 @@ import static org.folio.rest.impl.MockServer.getPieceBatchUpdates;
 import static org.folio.rest.impl.MockServer.getPieceSearches;
 import static org.folio.rest.impl.MockServer.getPoLineSearches;
 import static org.folio.rest.impl.MockServer.getPurchaseOrderRetrievals;
+import static org.folio.rest.impl.MockServer.getQueryParams;
 import static org.folio.rest.jaxrs.model.ClaimingPieceResult.Status.FAILURE;
 import static org.folio.rest.jaxrs.model.ClaimingPieceResult.Status.SUCCESS;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
@@ -239,5 +251,123 @@ public class PiecesClaimingApiIT {
       assertThat(parameters.getJsonObject(0).getValue("value"), is(piece.getId()));
       assertThat(parameters.getJsonObject(1).getValue("value"), is("AMAZ"));
     }
+  }
+
+  private static Stream<Arguments> testPostPiecesClaimWithClaimSequenceArgs() {
+    // Sequence: 1 MANUAL (14 days), 2 INTEGRATION File download (28 days, the mock config's method), 3 INTEGRATION FTP (30 days)
+    return Stream.of(
+      Arguments.of("First claim: manual stage, no config call, no job", null, 1, 14, "MANUAL", null, 0),
+      Arguments.of("Second claim: File download stage, job for the matching config", 1, 2, 28, "INTEGRATION", "File download", 1)
+    );
+  }
+
+  @ParameterizedTest
+  @MethodSource("testPostPiecesClaimWithClaimSequenceArgs")
+  void testPostPiecesClaimWithClaimSequence(String name, Integer storedStage, int expectedStage, int expectedInterval,
+                                            String expectedDeliveryType, String expectedTransmissionMethod, int expectedJobs) {
+    log.info("Testing postPiecesClaim with claim sequence, name: {}", name);
+    var claimSequence = claimSequence();
+    var piece = givenClaimSequencePiece(claimSequence, storedStage);
+
+    var request = getMockAsJson(BASE_MOCK_DATA_PATH + CLAIMING_MOCK_DATA_FOLDER + "send-claims-1-piece-1-vendor-1-job.json")
+      .mapTo(ClaimingCollection.class);
+    var response = verifyPostResponse(PIECES_CLAIMING_ENDPOINT, JsonObject.mapFrom(request).encode(),
+      prepareHeaders(EXIST_CONFIG_X_OKAPI_TENANT_LIMIT_10_CLAIMS), APPLICATION_JSON, CREATED.code());
+
+    // Written through the existing batch PUT with the next stage and its interval
+    var pieceUpdates = getPieceBatchUpdates();
+    assertThat(pieceUpdates, hasSize(1));
+    var claimedPiece = pieceUpdates.getFirst().mapTo(PieceCollection.class).getPieces().getFirst();
+    assertThat(claimedPiece.getId(), is(piece.getId()));
+    assertThat(claimedPiece.getReceivingStatus(), is(Piece.ReceivingStatus.CLAIM_SENT));
+    assertThat(claimedPiece.getClaiming().getSequence().getId(), is(claimSequence.getId()));
+    assertThat(claimedPiece.getClaiming().getSequence().getStage(), is(expectedStage));
+    assertThat(claimedPiece.getClaimingInterval(), is(expectedInterval));
+
+    var effectiveConfigsQueries = getQueryParams(DATA_EXPORT_SPRING_EFFECTIVE_CONFIGS);
+    if (expectedTransmissionMethod == null) {
+      assertThat(effectiveConfigsQueries, is(empty()));
+      assertThat(getDataExportSpringJobCreations(), is(nullValue()));
+    } else {
+      assertThat(effectiveConfigsQueries, hasSize(1));
+      assertThat(effectiveConfigsQueries.getFirst(), containsString("transmissionMethod=File%20download"));
+      var jobCreations = getDataExportSpringJobCreations();
+      assertThat(jobCreations, hasSize(expectedJobs));
+      assertThat(jobCreations.getFirst().getJsonObject(EXPORT_TYPE_SPECIFIC_PARAMETERS.getValue())
+        .getJsonObject(VENDOR_EDI_ORDERS_EXPORT_CONFIG.getValue())
+        .getJsonArray(CLAIM_PIECE_IDS.getValue()).getList(), is(List.of(piece.getId())));
+    }
+
+    var result = response.as(ClaimingResults.class).getClaimingPieceResults().getFirst();
+    assertThat(result.getStatus(), is(SUCCESS));
+    assertThat(result.getDeliveryType().value(), is(expectedDeliveryType));
+    assertThat(result.getTransmissionMethod() == null ? null : result.getTransmissionMethod().value(), is(expectedTransmissionMethod));
+    assertThat(result.getClaimSequenceId(), is(claimSequence.getId()));
+    assertThat(result.getStage(), is(expectedStage));
+    assertThat(result.getStageName(), is(claimSequence.getStages().get(expectedStage - 1).getName()));
+    assertThat(result.getClaimingInterval(), is(expectedInterval));
+  }
+
+  @Test
+  void testPostPiecesClaimWithClaimSequenceStageWithoutMatchingConfig() {
+    var claimSequence = claimSequence();
+    // Stage 3 is FTP, the vendor only has a File download Claims integration
+    var piece = givenClaimSequencePiece(claimSequence, 2);
+
+    var request = getMockAsJson(BASE_MOCK_DATA_PATH + CLAIMING_MOCK_DATA_FOLDER + "send-claims-1-piece-1-vendor-1-job.json")
+      .mapTo(ClaimingCollection.class);
+    var response = verifyPostResponse(PIECES_CLAIMING_ENDPOINT, JsonObject.mapFrom(request).encode(),
+      prepareHeaders(EXIST_CONFIG_X_OKAPI_TENANT_LIMIT_10_CLAIMS), APPLICATION_JSON, UNPROCESSABLE_ENTITY.code());
+
+    var error = new JsonObject(response.getBody().print()).getJsonArray("errors").getJsonObject(0);
+    assertThat(error.getString("code"), is("claimSequenceStageRequiresIntegration"));
+    var parameters = error.getJsonArray("parameters").stream().map(JsonObject.class::cast)
+      .map(parameter -> parameter.getString("key") + "=" + parameter.getString("value")).toList();
+    assertThat(parameters.contains("transmissionMethod=FTP"), is(true));
+    assertThat(parameters.contains("pieceId=" + piece.getId()), is(true));
+    assertThat(getPieceBatchUpdates(), is(nullValue()));
+    assertThat(getDataExportSpringJobCreations(), is(nullValue()));
+  }
+
+  private static ClaimSequence claimSequence() {
+    return new ClaimSequence()
+      .withId(UUID.randomUUID().toString())
+      .withName("Claim sequence")
+      .withIsActive(true)
+      .withAfterLastStage(ClaimSequence.AfterLastStage.STOP)
+      .withStages(List.of(
+        new ClaimSequenceStage().withStage(1).withName("Phone").withInterval(14)
+          .withDeliveryType(ClaimSequenceStage.DeliveryType.MANUAL),
+        new ClaimSequenceStage().withStage(2).withName("File").withInterval(28)
+          .withDeliveryType(ClaimSequenceStage.DeliveryType.INTEGRATION)
+          .withTransmissionMethod(ClaimSequenceStage.TransmissionMethod.FILE_DOWNLOAD),
+        new ClaimSequenceStage().withStage(3).withName("FTP").withInterval(30)
+          .withDeliveryType(ClaimSequenceStage.DeliveryType.INTEGRATION)
+          .withTransmissionMethod(ClaimSequenceStage.TransmissionMethod.FTP)));
+  }
+
+  private Piece givenClaimSequencePiece(ClaimSequence claimSequence, Integer storedStage) {
+    var organization = getMockAsJson(ORGANIZATION_COLLECTION)
+      .getJsonArray(ORGANIZATIONS_KEY).getJsonObject(0)
+      .mapTo(Organization.class);
+    var poLine = getMockAsJson(PO_LINES_COLLECTION)
+      .getJsonArray(PO_LINES_KEY).getJsonObject(17)
+      .mapTo(PoLine.class)
+      .withClaimSequenceId(claimSequence.getId());
+    var purchaseOrder = getMinimalOrder(poLine)
+      .withVendor(organization.getId());
+    var piece = getMockAsJson(PIECES_COLLECTION)
+      .getJsonArray(PIECES_KEY).getJsonObject(69)
+      .mapTo(Piece.class);
+    if (storedStage != null) {
+      piece.withClaiming(new PieceClaiming().withSequence(new PieceClaimingSequence().withId(claimSequence.getId()).withStage(storedStage)));
+    }
+
+    addMockEntry(ORGANIZATION_STORAGE, organization);
+    addMockEntry(PURCHASE_ORDER_STORAGE, purchaseOrder);
+    addMockEntry(PO_LINES_STORAGE, poLine);
+    addMockEntry(PIECES_STORAGE, piece);
+    addMockEntry(CLAIM_SEQUENCES, claimSequence);
+    return piece;
   }
 }

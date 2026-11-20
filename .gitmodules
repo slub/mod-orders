@@ -5,4 +5,4 @@
 [submodule "ramls/acq-models"]
 	path = ramls/acq-models
 	url = https://github.com/slub/acq-models.git
-  branch = dev
+  branch = MODORDERS-1489

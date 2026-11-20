@@ -16,7 +16,14 @@ import org.folio.rest.jaxrs.model.ClaimingPieceResult;
 import org.folio.rest.jaxrs.model.Piece;
 import org.folio.rest.jaxrs.model.PoLine;
 import org.folio.rest.jaxrs.model.PurchaseOrder;
+import org.folio.rest.acq.model.ClaimSequence;
+import org.folio.rest.acq.model.ClaimSequenceStage;
+import org.folio.rest.jaxrs.model.PieceClaiming;
+import org.folio.rest.jaxrs.model.PieceClaimingSequence;
+import org.folio.service.ClaimSequenceService;
 import org.folio.service.caches.ExportConfigsCache;
+import org.folio.service.pieces.claiming.ClaimResolutionService;
+import org.folio.service.pieces.claiming.PieceClaimResolution;
 import org.folio.service.dataexport.ExportConfigsRetriever;
 import org.folio.service.orders.PurchaseOrderLineService;
 import org.folio.service.orders.PurchaseOrderStorageService;
@@ -55,11 +62,15 @@ import static org.folio.orders.utils.ResourcePathResolver.DATA_EXPORT_SPRING_EFF
 import static org.folio.orders.utils.ResourcePathResolver.resourcesPath;
 import static org.folio.rest.core.exceptions.ErrorCodes.CANNOT_FIND_PIECES_WITH_LATE_STATUS_TO_PROCESS;
 import static org.folio.rest.core.exceptions.ErrorCodes.CANNOT_SEND_CLAIMS_PIECE_IDS_ARE_EMPTY;
+import static org.folio.rest.core.exceptions.ErrorCodes.CLAIM_SEQUENCE_COMPLETED;
+import static org.folio.rest.core.exceptions.ErrorCodes.CLAIM_SEQUENCE_STAGE_REQUIRES_INTEGRATION;
 import static org.folio.rest.core.exceptions.ErrorCodes.UNABLE_TO_GENERATE_CLAIMS_FOR_ORG_NO_INTEGRATION_DETAILS;
 import static org.folio.rest.core.exceptions.ErrorCodes.USER_HAS_NO_PERMISSIONS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -84,6 +95,8 @@ public class PiecesClaimingServiceTest {
   private RestClient restClient;
   @Mock
   private RequestContext requestContext;
+  @Mock
+  private ClaimSequenceService claimSequenceService;
 
   private PiecesClaimingService piecesClaimingService;
 
@@ -97,7 +110,8 @@ public class PiecesClaimingServiceTest {
     callPrivateMethod(exportConfigsCache, "init");
 
     piecesClaimingService = new PiecesClaimingService(exportConfigsCache, pieceStorageService, purchaseOrderLineService,
-      purchaseOrderStorageService, organizationService, pieceUpdateFlowManager, restClient);
+      purchaseOrderStorageService, organizationService, pieceUpdateFlowManager, restClient,
+      new ClaimResolutionService(claimSequenceService));
   }
 
   @AfterEach
@@ -179,7 +193,7 @@ public class PiecesClaimingServiceTest {
     when(purchaseOrderLineService.getOrderLineById(any(), any())).thenReturn(Future.succeededFuture(new PoLine().withPurchaseOrderId("orderId1")));
     when(purchaseOrderStorageService.getPurchaseOrderById(any(), any())).thenReturn(Future.succeededFuture(new PurchaseOrder().withVendor("vendorId")));
     when(organizationService.getVendorById(any(), any())).thenReturn(Future.succeededFuture(new Organization().withId("vendorId").withIsVendor(true)));
-    when(pieceUpdateFlowManager.updatePiecesStatuses(any(), any(), any(), any(), any(), any())).thenReturn(Future.succeededFuture());
+    when(pieceUpdateFlowManager.updatePiecesStatuses(any(), any(), any(), any(), any(), any(), any())).thenReturn(Future.succeededFuture());
     when(pieceUpdateFlowManager.isOperationRestricted(any(), any())).thenReturn(Future.succeededFuture());
     when(restClient.post(eq(resourcesPath(DATA_EXPORT_SPRING_CREATE_JOB)), any(), any(), any())).thenReturn(Future.succeededFuture(new JsonObject().put("status", "CREATED")));
     when(restClient.postEmptyResponse(any(), any(), any())).thenReturn(Future.succeededFuture());
@@ -287,7 +301,7 @@ public class PiecesClaimingServiceTest {
     when(purchaseOrderLineService.getOrderLineById(any(), any())).thenReturn(Future.succeededFuture(new PoLine().withPurchaseOrderId("orderId1")));
     when(purchaseOrderStorageService.getPurchaseOrderById(any(), any())).thenReturn(Future.succeededFuture(new PurchaseOrder().withVendor("vendorId")));
     when(organizationService.getVendorById(any(), any())).thenReturn(Future.succeededFuture(new Organization().withId("vendorId").withCode("VENDOR").withIsVendor(true)));
-    when(pieceUpdateFlowManager.updatePiecesStatuses(any(), any(), any(), any(), any(), any())).thenReturn(Future.succeededFuture());
+    when(pieceUpdateFlowManager.updatePiecesStatuses(any(), any(), any(), any(), any(), any(), any())).thenReturn(Future.succeededFuture());
     when(pieceUpdateFlowManager.isOperationRestricted(any(), any())).thenReturn(Future.succeededFuture());
     when(restClient.post(eq(resourcesPath(DATA_EXPORT_SPRING_CREATE_JOB)), any(), any(), any())).thenReturn(Future.succeededFuture(new JsonObject().put("status", "CREATED")));
     when(restClient.postEmptyResponse(any(), any(), any())).thenReturn(Future.succeededFuture());
@@ -313,7 +327,7 @@ public class PiecesClaimingServiceTest {
     when(purchaseOrderLineService.getOrderLineById(any(), any())).thenReturn(Future.succeededFuture(new PoLine().withPurchaseOrderId("orderId1")));
     when(purchaseOrderStorageService.getPurchaseOrderById(any(), any())).thenReturn(Future.succeededFuture(new PurchaseOrder().withVendor("vendorId")));
     when(organizationService.getVendorById(any(), any())).thenReturn(Future.succeededFuture(new Organization().withId("vendorId").withCode("VENDOR").withIsVendor(true)));
-    when(pieceUpdateFlowManager.updatePiecesStatuses(any(), any(), any(), any(), any(), any())).thenReturn(Future.succeededFuture());
+    when(pieceUpdateFlowManager.updatePiecesStatuses(any(), any(), any(), any(), any(), any(), any())).thenReturn(Future.succeededFuture());
     when(pieceUpdateFlowManager.isOperationRestricted(any(), any())).thenReturn(Future.succeededFuture());
     when(restClient.post(eq(resourcesPath(DATA_EXPORT_SPRING_CREATE_JOB)), any(), any(), any())).thenReturn(Future.succeededFuture(new JsonObject().put("status", "CREATED")));
     when(restClient.postEmptyResponse(any(), any(), any())).thenReturn(Future.succeededFuture());
@@ -358,7 +372,7 @@ public class PiecesClaimingServiceTest {
       return Future.succeededFuture(new Organization().withId(vendorId).withCode(vendorId.equals("vendorId1") ? "VENDOR1" : "VENDOR2").withIsVendor(true));
     });
 
-    when(pieceUpdateFlowManager.updatePiecesStatuses(any(), any(), any(), any(), any(), any())).thenReturn(Future.succeededFuture());
+    when(pieceUpdateFlowManager.updatePiecesStatuses(any(), any(), any(), any(), any(), any(), any())).thenReturn(Future.succeededFuture());
     when(pieceUpdateFlowManager.isOperationRestricted(any(), any())).thenReturn(Future.succeededFuture());
     when(restClient.post(eq(resourcesPath(DATA_EXPORT_SPRING_CREATE_JOB)), any(), any(), any())).thenReturn(Future.succeededFuture(new JsonObject().put("status", "CREATED")));
     when(restClient.postEmptyResponse(any(), any(), any())).thenReturn(Future.succeededFuture());
@@ -366,7 +380,7 @@ public class PiecesClaimingServiceTest {
     piecesClaimingService.sendClaims(claimingCollection, requestContext)
       .onComplete(testContext.succeeding(result -> testContext.verify(() -> {
         assertEquals(5, result.getClaimingPieceResults().size());
-        verify(pieceUpdateFlowManager).updatePiecesStatuses(eq(List.of("pieceId1", "pieceId2", "pieceId3", "pieceId4", "pieceId5")), any(), any(), any(), any(), any());
+        verify(pieceUpdateFlowManager).updatePiecesStatuses(eq(List.of("pieceId1", "pieceId2", "pieceId3", "pieceId4", "pieceId5")), any(), any(), any(), any(), any(), any());
         var copiedSortedResults = new ArrayList<>(result.getClaimingPieceResults());
         copiedSortedResults.sort(Comparator.comparing(ClaimingPieceResult::getPieceId));
         assertEquals("pieceId1", copiedSortedResults.getFirst().getPieceId());
@@ -412,7 +426,7 @@ public class PiecesClaimingServiceTest {
       return Future.succeededFuture(new Organization().withId(vendorId).withCode(vendorId.equals("vendorId1") ? "VENDOR1" : "VENDOR2").withIsVendor(true));
     });
 
-    when(pieceUpdateFlowManager.updatePiecesStatuses(any(), any(), any(), any(), any(), any())).thenReturn(Future.succeededFuture());
+    when(pieceUpdateFlowManager.updatePiecesStatuses(any(), any(), any(), any(), any(), any(), any())).thenReturn(Future.succeededFuture());
     when(pieceUpdateFlowManager.isOperationRestricted(any(), any())).thenReturn(Future.succeededFuture());
     when(restClient.post(eq(resourcesPath(DATA_EXPORT_SPRING_CREATE_JOB)), any(), any(), any())).thenReturn(Future.succeededFuture(new JsonObject().put("status", "CREATED")));
     when(restClient.postEmptyResponse(any(), any(), any())).thenReturn(Future.succeededFuture());
@@ -503,7 +517,7 @@ public class PiecesClaimingServiceTest {
       .onComplete(testContext.succeeding(result -> testContext.verify(() -> {
         assertEquals(1, result.getClaimingPieceResults().size());
         assertEquals(Map.of("CLAIMS_vendorId_x", Set.of("pieceId1"), "CLAIMS_vendorId_y", Set.of("pieceId1")), createdJobs(2));
-        verify(pieceUpdateFlowManager).updatePiecesStatuses(eq(List.of("pieceId1")), any(), any(), any(), any(), any());
+        verify(pieceUpdateFlowManager).updatePiecesStatuses(eq(List.of("pieceId1")), any(), any(), any(), any(), any(), any());
         testContext.completeNow();
       })));
   }
@@ -594,8 +608,192 @@ public class PiecesClaimingServiceTest {
       })));
   }
 
+  // ---- Claim sequences (MODORDERS-1489) ----
+
+  private static final String MANUAL_SEQUENCE_ID = UUID.randomUUID().toString();
+  private static final String EMAIL_SEQUENCE_ID = UUID.randomUUID().toString();
+  private static final String FTP_SEQUENCE_ID = UUID.randomUUID().toString();
+  private static final String FILE_DOWNLOAD_SEQUENCE_ID = UUID.randomUUID().toString();
+
+  @Test
+  void testSendClaims_mixedStages_callPerTransmissionMethodAndJobsOnlyWithTheirPieces(VertxTestContext testContext) {
+    var claimingCollection = new ClaimingCollection()
+      .withClaimingPieceIds(List.of("pieceId1", "pieceId2", "pieceId3", "pieceId4")).withClaimingInterval(5);
+    mockConfigsByTransmissionMethod(Map.of("", List.of("CLAIMS_vendorId_all"), "Email", List.of("CLAIMS_vendorId_email"),
+      "FTP", List.of("CLAIMS_vendorId_ftp")));
+    mockSequenceClaimFlow(Map.of("pieceId1", MANUAL_SEQUENCE_ID, "pieceId2", EMAIL_SEQUENCE_ID, "pieceId3", FTP_SEQUENCE_ID));
+
+    piecesClaimingService.sendClaims(claimingCollection, requestContext)
+      .onComplete(testContext.succeeding(result -> testContext.verify(() -> {
+        assertEquals(Map.of("CLAIMS_vendorId_all", Set.of("pieceId4"), "CLAIMS_vendorId_email", Set.of("pieceId2"),
+          "CLAIMS_vendorId_ftp", Set.of("pieceId3")), createdJobs(3));
+        var requests = ArgumentCaptor.forClass(RequestEntry.class);
+        verify(restClient, times(3)).getAsJsonObject(requests.capture(), any());
+        var methods = requests.getAllValues().stream()
+          .map(request -> String.valueOf(request.getQueryParams().getOrDefault("transmissionMethod", "")))
+          .collect(Collectors.toSet());
+        assertEquals(Set.of("", "Email", "FTP"), methods);
+
+        var results = result.getClaimingPieceResults().stream().collect(Collectors.toMap(ClaimingPieceResult::getPieceId, r -> r));
+        var manual = results.get("pieceId1");
+        assertEquals(ClaimingPieceResult.DeliveryType.MANUAL, manual.getDeliveryType());
+        assertEquals(null, manual.getTransmissionMethod());
+        assertEquals(MANUAL_SEQUENCE_ID, manual.getClaimSequenceId());
+        assertEquals(1, manual.getStage());
+        assertEquals("Phone", manual.getStageName());
+        assertEquals(14, manual.getClaimingInterval());
+        var ftp = results.get("pieceId3");
+        assertEquals(ClaimingPieceResult.DeliveryType.INTEGRATION, ftp.getDeliveryType());
+        assertEquals(ClaimingPieceResult.TransmissionMethod.FTP, ftp.getTransmissionMethod());
+        assertEquals(30, ftp.getClaimingInterval());
+        var noSequence = results.get("pieceId4");
+        assertEquals(ClaimingPieceResult.DeliveryType.INTEGRATION, noSequence.getDeliveryType());
+        assertEquals(null, noSequence.getClaimSequenceId());
+        assertEquals(5, noSequence.getClaimingInterval());
+
+        // One update for all pieces, with the resolutions worked out before the config lookup
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, PieceClaimResolution>> resolutions = ArgumentCaptor.forClass(Map.class);
+        verify(pieceUpdateFlowManager).updatePiecesStatuses(argThat(ids -> ids.size() == 4), any(), eq(5), any(), any(),
+          resolutions.capture(), any());
+        assertTrue(resolutions.getValue().get("pieceId1").isManual());
+        assertEquals(1, resolutions.getValue().get("pieceId2").stage());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void testSendClaims_manualStageOnly_noConfigCallNoJob(VertxTestContext testContext) {
+    var claimingCollection = new ClaimingCollection().withClaimingPieceIds(List.of("pieceId1")).withClaimingInterval(5);
+    mockSequenceClaimFlow(Map.of("pieceId1", MANUAL_SEQUENCE_ID));
+
+    piecesClaimingService.sendClaims(claimingCollection, requestContext)
+      .onComplete(testContext.succeeding(result -> testContext.verify(() -> {
+        verify(restClient, never()).getAsJsonObject(any(), any());
+        verify(restClient, never()).post(eq(resourcesPath(DATA_EXPORT_SPRING_CREATE_JOB)), any(), any(), any());
+        verify(pieceUpdateFlowManager).updatePiecesStatuses(eq(List.of("pieceId1")), any(), any(), any(), any(), any(), any());
+        assertEquals(ClaimingPieceResult.DeliveryType.MANUAL, result.getClaimingPieceResults().getFirst().getDeliveryType());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void testSendClaims_fileDownloadStage_methodEncoded(VertxTestContext testContext) {
+    var claimingCollection = new ClaimingCollection().withClaimingPieceIds(List.of("pieceId1")).withClaimingInterval(5);
+    mockConfigsByTransmissionMethod(Map.of("File%20download", List.of("CLAIMS_vendorId_download")));
+    mockSequenceClaimFlow(Map.of("pieceId1", FILE_DOWNLOAD_SEQUENCE_ID));
+
+    piecesClaimingService.sendClaims(claimingCollection, requestContext)
+      .onComplete(testContext.succeeding(result -> testContext.verify(() -> {
+        var requests = ArgumentCaptor.forClass(RequestEntry.class);
+        verify(restClient).getAsJsonObject(requests.capture(), any());
+        assertTrue(requests.getValue().buildEndpoint().endsWith("transmissionMethod=File%20download")
+          || requests.getValue().buildEndpoint().contains("transmissionMethod=File%20download&"));
+        assertEquals(Map.of("CLAIMS_vendorId_download", Set.of("pieceId1")), createdJobs(1));
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void testSendClaims_integrationStageWithoutConfig_rejectedBeforeAnyWrite(VertxTestContext testContext) {
+    var claimingCollection = new ClaimingCollection().withClaimingPieceIds(List.of("pieceId1", "pieceId2", "pieceId3")).withClaimingInterval(5);
+    // Only a config without transmission method filter (non-sequence pieces); none for FTP
+    mockConfigsByTransmissionMethod(Map.of("", List.of("CLAIMS_vendorId_all")));
+    mockSequenceClaimFlow(Map.of("pieceId1", FTP_SEQUENCE_ID, "pieceId2", FTP_SEQUENCE_ID, "pieceId3", MANUAL_SEQUENCE_ID));
+
+    piecesClaimingService.sendClaims(claimingCollection, requestContext)
+      .onComplete(testContext.failing(throwable -> testContext.verify(() -> {
+        var httpException = Assertions.assertInstanceOf(HttpException.class, throwable);
+        assertEquals(422, httpException.getCode());
+        assertEquals(1, httpException.getErrors().getErrors().size());
+        var error = httpException.getErrors().getErrors().getFirst();
+        assertEquals(CLAIM_SEQUENCE_STAGE_REQUIRES_INTEGRATION.getCode(), error.getCode());
+        // PO lines without acquisition method: no acquisitionMethod parameter
+        assertEquals(List.of("vendorId=vendorId", "transmissionMethod=FTP", "pieceId=pieceId1", "pieceId=pieceId2"),
+          error.getParameters().stream().map(p -> p.getKey() + "=" + p.getValue()).toList());
+        verifyNoClaimSent();
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void testSendClaims_completedSequence_rejectedBeforeConfigCall(VertxTestContext testContext) {
+    var claimingCollection = new ClaimingCollection().withClaimingPieceIds(List.of("pieceId1", "pieceId2")).withClaimingInterval(5);
+    mockExportConfigs("CLAIMS_vendorId");
+    mockSequenceClaimFlow(Map.of("pieceId1", MANUAL_SEQUENCE_ID));
+    // pieceId1 already claimed at the only stage of a STOP sequence
+    var pieces = List.of(
+      new Piece().withId("pieceId1").withPoLineId("pieceId1").withReceivingStatus(Piece.ReceivingStatus.LATE)
+        .withClaiming(new PieceClaiming().withSequence(new PieceClaimingSequence().withId(MANUAL_SEQUENCE_ID).withStage(1))),
+      new Piece().withId("pieceId2").withPoLineId("pieceId2").withReceivingStatus(Piece.ReceivingStatus.LATE));
+    doReturn(Future.succeededFuture(pieces)).when(pieceStorageService).getPiecesByIds(any(), any());
+
+    piecesClaimingService.sendClaims(claimingCollection, requestContext)
+      .onComplete(testContext.failing(throwable -> testContext.verify(() -> {
+        var httpException = Assertions.assertInstanceOf(HttpException.class, throwable);
+        assertEquals(400, httpException.getCode());
+        var error = httpException.getErrors().getErrors().getFirst();
+        assertEquals(CLAIM_SEQUENCE_COMPLETED.getCode(), error.getCode());
+        assertEquals("pieceId1", error.getParameters().getFirst().getValue());
+        verify(restClient, never()).getAsJsonObject(any(), any());
+        verifyNoClaimSent();
+        testContext.completeNow();
+      })));
+  }
+
+  /**
+   * One vendor "vendorId" with one PO line (without acquisition method) per piece, the PO line id being the piece id.
+   * The map gives the PO line's claim sequence; "pieceId4" (if requested) and pieces missing in the map have none.
+   * Sequences: MANUAL (Phone, 14 days), EMAIL / FTP / FILE_DOWNLOAD (one INTEGRATION stage each, 30 days), all STOP.
+   */
+  private void mockSequenceClaimFlow(Map<String, String> claimSequenceIdByPieceId) {
+    var pieceIds = new TreeSet<>(claimSequenceIdByPieceId.keySet());
+    pieceIds.add("pieceId1");
+    pieceIds.add("pieceId4");
+    var pieces = pieceIds.stream()
+      .map(pieceId -> new Piece().withId(pieceId).withPoLineId(pieceId).withReceivingStatus(Piece.ReceivingStatus.LATE))
+      .toList();
+    when(pieceStorageService.getPiecesByIds(any(), any())).thenAnswer(invocation -> {
+      List<String> requested = invocation.getArgument(0);
+      return Future.succeededFuture(pieces.stream().filter(piece -> requested.contains(piece.getId())).toList());
+    });
+    when(purchaseOrderLineService.getOrderLineById(any(), any())).thenAnswer(invocation -> Future.succeededFuture(
+      new PoLine().withPurchaseOrderId("orderId").withClaimSequenceId(claimSequenceIdByPieceId.get(invocation.<String>getArgument(0)))));
+    when(purchaseOrderStorageService.getPurchaseOrderById(any(), any())).thenReturn(Future.succeededFuture(new PurchaseOrder().withVendor("vendorId")));
+    when(organizationService.getVendorById(any(), any())).thenReturn(Future.succeededFuture(new Organization().withId("vendorId").withCode("VENDOR").withIsVendor(true)));
+    when(pieceUpdateFlowManager.updatePiecesStatuses(any(), any(), any(), any(), any(), any(), any())).thenReturn(Future.succeededFuture());
+    when(pieceUpdateFlowManager.isOperationRestricted(any(), any())).thenReturn(Future.succeededFuture());
+    when(restClient.post(eq(resourcesPath(DATA_EXPORT_SPRING_CREATE_JOB)), any(), any(), any())).thenReturn(Future.succeededFuture(new JsonObject().put("status", "CREATED")));
+    when(claimSequenceService.getClaimSequencesByIds(any(), any())).thenReturn(Future.succeededFuture(List.of(
+      sequence(MANUAL_SEQUENCE_ID, new ClaimSequenceStage().withName("Phone").withDeliveryType(ClaimSequenceStage.DeliveryType.MANUAL).withInterval(14)),
+      sequence(EMAIL_SEQUENCE_ID, integrationStage(ClaimSequenceStage.TransmissionMethod.EMAIL)),
+      sequence(FTP_SEQUENCE_ID, integrationStage(ClaimSequenceStage.TransmissionMethod.FTP)),
+      sequence(FILE_DOWNLOAD_SEQUENCE_ID, integrationStage(ClaimSequenceStage.TransmissionMethod.FILE_DOWNLOAD)))));
+  }
+
+  private static ClaimSequenceStage integrationStage(ClaimSequenceStage.TransmissionMethod transmissionMethod) {
+    return new ClaimSequenceStage().withName(transmissionMethod.value()).withDeliveryType(ClaimSequenceStage.DeliveryType.INTEGRATION)
+      .withTransmissionMethod(transmissionMethod).withInterval(30);
+  }
+
+  private static ClaimSequence sequence(String id, ClaimSequenceStage stage) {
+    return new ClaimSequence().withId(id).withIsActive(true).withAfterLastStage(ClaimSequence.AfterLastStage.STOP).withStages(List.of(stage));
+  }
+
+  /**
+   * Answers /effective-configs by the transmissionMethod parameter as sent ("" = parameter absent).
+   */
+  private void mockConfigsByTransmissionMethod(Map<String, List<String>> configNamesByMethod) {
+    when(restClient.getAsJsonObject(any(), any())).thenAnswer(invocation -> {
+      RequestEntry requestEntry = invocation.getArgument(0);
+      var method = String.valueOf(requestEntry.getQueryParams().getOrDefault("transmissionMethod", ""));
+      var configNames = configNamesByMethod.getOrDefault(method, List.of());
+      return Future.succeededFuture(createExportConfigs(configNames.toArray(String[]::new)));
+    });
+  }
+
   private void verifyNoClaimSent() {
-    verify(pieceUpdateFlowManager, never()).updatePiecesStatuses(any(), any(), any(), any(), any(), any());
+    verify(pieceUpdateFlowManager, never()).updatePiecesStatuses(any(), any(), any(), any(), any(), any(), any());
     verify(restClient, never()).post(eq(resourcesPath(DATA_EXPORT_SPRING_CREATE_JOB)), any(), any(), any());
   }
 
@@ -614,7 +812,7 @@ public class PiecesClaimingServiceTest {
       new PoLine().withPurchaseOrderId("orderId").withAcquisitionMethod(acquisitionMethodByPieceId.get(invocation.<String>getArgument(0)))));
     when(purchaseOrderStorageService.getPurchaseOrderById(any(), any())).thenReturn(Future.succeededFuture(new PurchaseOrder().withVendor("vendorId")));
     when(organizationService.getVendorById(any(), any())).thenReturn(Future.succeededFuture(new Organization().withId("vendorId").withCode("VENDOR").withIsVendor(true)));
-    when(pieceUpdateFlowManager.updatePiecesStatuses(any(), any(), any(), any(), any(), any())).thenReturn(Future.succeededFuture());
+    when(pieceUpdateFlowManager.updatePiecesStatuses(any(), any(), any(), any(), any(), any(), any())).thenReturn(Future.succeededFuture());
     when(pieceUpdateFlowManager.isOperationRestricted(any(), any())).thenReturn(Future.succeededFuture());
     when(restClient.post(eq(resourcesPath(DATA_EXPORT_SPRING_CREATE_JOB)), any(), any(), any())).thenReturn(Future.succeededFuture(new JsonObject().put("status", "CREATED")));
   }

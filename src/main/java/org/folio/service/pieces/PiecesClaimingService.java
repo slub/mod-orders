@@ -24,6 +24,11 @@ import org.folio.service.caches.ExportConfigsCache;
 import org.folio.service.orders.PurchaseOrderLineService;
 import org.folio.service.orders.PurchaseOrderStorageService;
 import org.folio.service.organization.OrganizationService;
+import org.folio.service.pieces.claiming.ClaimConfigKey;
+import org.folio.service.pieces.claiming.ClaimResolutionService;
+import org.folio.service.pieces.claiming.ClaimSequenceErrors;
+import org.folio.service.pieces.claiming.ClaimTarget;
+import org.folio.service.pieces.claiming.PieceClaimResolution;
 import org.folio.service.pieces.flows.update.PieceUpdateFlowManager;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
@@ -69,13 +74,22 @@ public class PiecesClaimingService {
   private final OrganizationService organizationService;
   private final PieceUpdateFlowManager pieceUpdateFlowManager;
   private final RestClient restClient;
+  private final ClaimResolutionService claimResolutionService;
 
-  private record ClaimConfigs(Map<String, ClaimJob> claimJobs, List<ClaimPiece> piecesWithoutConfig) {
+  /**
+   * @param claimJobs            one job per Claims export config, keyed by config id
+   * @param piecesWithoutConfig  pieces without claim sequence for which no config applies
+   * @param stagesWithoutConfig  pieces at an {@code INTEGRATION} stage for which no config with the stage's transmission
+   *                             method applies, by (vendor, acquisition method, transmission method)
+   */
+  private record ClaimConfigs(Map<String, ClaimJob> claimJobs, List<ClaimPiece> piecesWithoutConfig,
+                              Map<ClaimConfigKey, List<String>> stagesWithoutConfig) {
   }
 
   /**
-   * Sends claims by receiving pieces to be claimed, finds the Claims export configs of each piece,
-   * updates piece statuses and finally creates one job per export config with only the pieces it takes
+   * Sends claims by receiving pieces to be claimed, works out the claim sequence stage of each piece, finds the Claims
+   * export configs of each piece that is sent through an integration, updates piece statuses and finally creates one
+   * job per export config with only the pieces it takes. Pieces at a {@code MANUAL} stage get no config and no job.
    *
    * @param claimingCollection An array of pieces ids
    * @param requestContext     Headers to make HTTP or Kafka requests
@@ -94,13 +108,15 @@ public class PiecesClaimingService {
           log.info("sendClaims:: Cannot find pieces with late status to process - No claims are sent");
           throwHttpException(CANNOT_FIND_PIECES_WITH_LATE_STATUS_TO_PROCESS, claimingCollection, HttpStatus.HTTP_BAD_REQUEST);
         }
-        return resolveConfigs(claimPieces, requestContext)
-          .compose(claimConfigs -> {
-            validateConfigs(claimingCollection, claimConfigs);
-            var latePieceIds = claimPieces.stream().map(ClaimPiece::pieceId).distinct().toList();
-            return pieceUpdateFlowManager.isOperationRestricted(latePieceIds, requestContext)
-              .compose(v -> updatePiecesAndCreateJobs(claimingCollection, claimPieces, claimConfigs.claimJobs(), requestContext));
-          });
+        var claimTargets = claimPieces.stream().map(piece -> new ClaimTarget(piece.piece(), piece.claimSequenceId())).toList();
+        return claimResolutionService.resolve(claimTargets, requestContext)
+          .compose(resolutions -> resolveConfigs(claimPieces, resolutions, requestContext)
+            .compose(claimConfigs -> {
+              validateConfigs(claimingCollection, claimConfigs);
+              var latePieceIds = claimPieces.stream().map(ClaimPiece::pieceId).distinct().toList();
+              return pieceUpdateFlowManager.isOperationRestricted(latePieceIds, requestContext)
+                .compose(v -> updatePiecesAndCreateJobs(claimingCollection, claimPieces, claimConfigs.claimJobs(), resolutions, requestContext));
+            }));
       })
       .onFailure(t -> log.error("sendClaims:: Failed send claims: {}", JsonObject.mapFrom(claimingCollection).encodePrettily(), t));
   }
@@ -145,58 +161,84 @@ public class PiecesClaimingService {
         .compose(purchaseOrder -> organizationService.getVendorById(purchaseOrder.getVendor(), requestContext))
         .map(vendor -> {
           if (Objects.nonNull(vendor) && Boolean.TRUE.equals(vendor.getIsVendor())) {
-            return new ClaimPiece(vendor, piecePoLinePairs.getRight(), poLine.getAcquisitionMethod());
+            return new ClaimPiece(vendor, piece, poLine.getAcquisitionMethod(), poLine.getClaimSequenceId());
           }
           return null;
         }));
   }
 
-  private Future<ClaimConfigs> resolveConfigs(List<ClaimPiece> claimPieces, RequestContext requestContext) {
-    var piecesByPoLineValues = claimPieces.stream()
-      .collect(groupingBy(piece -> Pair.of(piece.vendor().getId(), piece.acquisitionMethod()), LinkedHashMap::new, toList()));
-    log.info("resolveConfigs:: Loading Claims export configs, vendor and acquisition method combinations: {}", piecesByPoLineValues.size());
-    var configsFutures = new ArrayList<Future<Pair<List<ClaimPiece>, JsonObject>>>();
-    piecesByPoLineValues.forEach((poLineValues, pieces) -> configsFutures.add(
-      exportConfigsCache.loadClaimsConfigsForPoLine(poLineValues.getLeft(), poLineValues.getRight(), requestContext)
-        .map(configs -> Pair.of(pieces, configs))));
+  private Future<ClaimConfigs> resolveConfigs(List<ClaimPiece> claimPieces, Map<String, PieceClaimResolution> resolutions,
+                                              RequestContext requestContext) {
+    // Pieces at a MANUAL stage are claimed outside FOLIO: no config lookup, no job
+    var piecesByConfigKey = claimPieces.stream()
+      .filter(piece -> !resolutionOf(resolutions, piece.pieceId()).isManual())
+      .collect(groupingBy(piece -> new ClaimConfigKey(piece.vendor().getId(), piece.acquisitionMethod(),
+        resolutionOf(resolutions, piece.pieceId()).transmissionMethodValue()), LinkedHashMap::new, toList()));
+    log.info("resolveConfigs:: Loading Claims export configs, vendor, acquisition method and transmission method combinations: {}, manual pieces: {}",
+      piecesByConfigKey.size(), claimPieces.size() - piecesByConfigKey.values().stream().mapToInt(List::size).sum());
+    var configsFutures = new ArrayList<Future<Pair<Map.Entry<ClaimConfigKey, List<ClaimPiece>>, JsonObject>>>();
+    piecesByConfigKey.entrySet().forEach(entry -> configsFutures.add(
+      exportConfigsCache.loadClaimsConfigsForPoLine(entry.getKey().vendorId(), entry.getKey().acquisitionMethod(),
+          entry.getKey().transmissionMethod(), requestContext)
+        .map(configs -> Pair.of(entry, configs))));
     return collectResultsOnSuccess(configsFutures).map(PiecesClaimingService::groupPiecesByConfig);
   }
 
-  private static ClaimConfigs groupPiecesByConfig(List<Pair<List<ClaimPiece>, JsonObject>> piecesWithConfigs) {
+  private static PieceClaimResolution resolutionOf(Map<String, PieceClaimResolution> resolutions, String pieceId) {
+    return resolutions.getOrDefault(pieceId, PieceClaimResolution.WITHOUT_SEQUENCE);
+  }
+
+  private static ClaimConfigs groupPiecesByConfig(List<Pair<Map.Entry<ClaimConfigKey, List<ClaimPiece>>, JsonObject>> piecesWithConfigs) {
     var claimJobs = new LinkedHashMap<String, ClaimJob>();
     var piecesWithoutConfig = new ArrayList<ClaimPiece>();
+    var stagesWithoutConfig = ClaimSequenceErrors.newStageGroups();
     piecesWithConfigs.forEach(piecesWithConfig -> {
-      var pieces = piecesWithConfig.getLeft();
+      var configKey = piecesWithConfig.getLeft().getKey();
+      var pieces = piecesWithConfig.getLeft().getValue();
       var configs = piecesWithConfig.getRight();
       if (configs.isEmpty()) {
-        piecesWithoutConfig.addAll(pieces);
+        if (configKey.transmissionMethod() == null) {
+          piecesWithoutConfig.addAll(pieces);
+        } else {
+          pieces.forEach(piece -> ClaimSequenceErrors.addPiece(stagesWithoutConfig, configKey, piece.pieceId()));
+        }
       }
       // A piece goes to every config returned for it
       configs.fieldNames().forEach(configId -> {
         var config = configs.getJsonObject(configId);
         var pieceIds = claimJobs.computeIfAbsent(configId, id -> new ClaimJob(config, new ArrayList<>())).pieceIds();
+        // Each piece has one config key, so a config returned for several keys gets each piece once
         pieces.forEach(piece -> pieceIds.add(piece.pieceId()));
       });
     });
-    return new ClaimConfigs(claimJobs, piecesWithoutConfig);
+    return new ClaimConfigs(claimJobs, piecesWithoutConfig, stagesWithoutConfig);
   }
 
   private void validateConfigs(ClaimingCollection claimingCollection, ClaimConfigs claimConfigs) {
-    if (claimConfigs.piecesWithoutConfig().isEmpty()) {
-      return;
+    var errors = new ArrayList<Error>();
+    if (!claimConfigs.piecesWithoutConfig().isEmpty()) {
+      log.info("validateConfigs:: Pieces without Claims export config: {} - No claims are sent", claimConfigs.piecesWithoutConfig().size());
+      errors.add(createMissingVendorIntegrationDetailsError(claimingCollection, claimConfigs.piecesWithoutConfig().getFirst().vendor()));
     }
-    log.info("validateConfigs:: Pieces without Claims export config: {} - No claims are sent", claimConfigs.piecesWithoutConfig().size());
-    throwHttpExceptionOnMissingVendorIntegrationDetails(claimingCollection, claimConfigs.piecesWithoutConfig().getFirst().vendor());
+    if (!claimConfigs.stagesWithoutConfig().isEmpty()) {
+      log.info("validateConfigs:: Pieces at an integration stage without Claims export config for its transmission method, groups: {} - No claims are sent",
+        claimConfigs.stagesWithoutConfig().size());
+      errors.addAll(ClaimSequenceErrors.stageRequiresIntegrationErrors(claimConfigs.stagesWithoutConfig()));
+    }
+    if (!errors.isEmpty()) {
+      throw ClaimSequenceErrors.unprocessable(errors);
+    }
   }
 
   private Future<ClaimingResults> updatePiecesAndCreateJobs(ClaimingCollection claimingCollection, List<ClaimPiece> claimPieces,
-                                                            Map<String, ClaimJob> claimJobs, RequestContext requestContext) {
+                                                            Map<String, ClaimJob> claimJobs, Map<String, PieceClaimResolution> resolutions,
+                                                            RequestContext requestContext) {
     var pieceIds = claimPieces.stream().map(ClaimPiece::pieceId).distinct().toList();
     log.info("updatePiecesAndCreateJobs:: Updating pieces and creating jobs, pieces: {}, configs: {}", pieceIds.size(), claimJobs.size());
-    return updatePieces(claimingCollection, pieceIds, requestContext)
+    return updatePieces(claimingCollection, pieceIds, resolutions, requestContext)
       .compose(v -> createJobs(claimJobs, requestContext))
       .map(v -> {
-        var successClaimingPieceResults = createSuccessClaimingResults(pieceIds);
+        var successClaimingPieceResults = createSuccessClaimingResults(pieceIds, resolutions, claimingCollection.getClaimingInterval());
         log.info("updatePiecesAndCreateJobs:: Successfully processed pieces for claiming, count: {}", successClaimingPieceResults.size());
         var claimingResults = new ClaimingResults().withClaimingPieceResults(successClaimingPieceResults);
         log.debug("updatePiecesAndCreateJobs:: Returning claiming results, claimingResults: {}", JsonObject.mapFrom(claimingResults).encodePrettily());
@@ -211,11 +253,13 @@ public class PiecesClaimingService {
     return collectResultsOnSuccess(createJobFutures);
   }
 
-  private Future<Void> updatePieces(ClaimingCollection claimingCollection, List<String> pieceIds, RequestContext requestContext) {
+  private Future<Void> updatePieces(ClaimingCollection claimingCollection, List<String> pieceIds,
+                                    Map<String, PieceClaimResolution> resolutions, RequestContext requestContext) {
     var claimingInterval = claimingCollection.getClaimingInterval();
     var internalNote = claimingCollection.getInternalNote();
     var externalNote = claimingCollection.getExternalNote();
-    return pieceUpdateFlowManager.updatePiecesStatuses(pieceIds, CLAIM_SENT, claimingInterval, internalNote, externalNote, requestContext);
+    return pieceUpdateFlowManager.updatePiecesStatuses(pieceIds, CLAIM_SENT, claimingInterval, internalNote, externalNote,
+      resolutions, requestContext);
   }
 
   private Future<Void> createJob(String configId, JsonObject config, List<String> pieceIds, RequestContext requestContext) {
@@ -233,19 +277,34 @@ public class PiecesClaimingService {
       .mapEmpty();
   }
 
-  private List<ClaimingPieceResult> createSuccessClaimingResults(List<String> pieceIds) {
+  private List<ClaimingPieceResult> createSuccessClaimingResults(List<String> pieceIds, Map<String, PieceClaimResolution> resolutions,
+                                                                 Integer requestClaimingInterval) {
     return pieceIds.stream()
-      .map(pieceId -> new ClaimingPieceResult().withPieceId(pieceId).withStatus(SUCCESS))
+      .map(pieceId -> createSuccessClaimingResult(pieceId, resolutionOf(resolutions, pieceId), requestClaimingInterval))
       .toList();
   }
 
-  private void throwHttpExceptionOnMissingVendorIntegrationDetails(ClaimingCollection claimingCollection, Organization vendorWithoutIntegrationDetails) {
+  private static ClaimingPieceResult createSuccessClaimingResult(String pieceId, PieceClaimResolution resolution, Integer requestClaimingInterval) {
+    var result = new ClaimingPieceResult().withPieceId(pieceId).withStatus(SUCCESS)
+      .withDeliveryType(ClaimingPieceResult.DeliveryType.fromValue(resolution.deliveryType().value()))
+      .withClaimingInterval(resolution.claimingInterval(requestClaimingInterval));
+    if (resolution.transmissionMethod() != null) {
+      result.setTransmissionMethod(ClaimingPieceResult.TransmissionMethod.fromValue(resolution.transmissionMethod().value()));
+    }
+    if (resolution.hasSequence()) {
+      result.withClaimSequenceId(resolution.claimSequenceId())
+        .withStage(resolution.stage())
+        .withStageName(resolution.sequenceStage().getName());
+    }
+    return result;
+  }
+
+  private Error createMissingVendorIntegrationDetailsError(ClaimingCollection claimingCollection, Organization vendorWithoutIntegrationDetails) {
     var parameters = createPieceIdParameters(claimingCollection);
     parameters.add(new Parameter().withKey(VENDOR_CODE_PARAMETER).withValue(vendorWithoutIntegrationDetails.getCode()));
-    var errors = List.of(new Error().withCode(UNABLE_TO_GENERATE_CLAIMS_FOR_ORG_NO_INTEGRATION_DETAILS.getCode())
+    return new Error().withCode(UNABLE_TO_GENERATE_CLAIMS_FOR_ORG_NO_INTEGRATION_DETAILS.getCode())
       .withMessage(String.format(UNABLE_TO_GENERATE_CLAIMS_FOR_ORG_NO_INTEGRATION_DETAILS.getDescription(), vendorWithoutIntegrationDetails.getCode()))
-      .withParameters(parameters));
-    throw new HttpException(HttpStatus.HTTP_UNPROCESSABLE_ENTITY.toInt(), new Errors().withErrors(errors).withTotalRecords(errors.size()));
+      .withParameters(parameters);
   }
 
   private void throwHttpException(ErrorCodes errorCode, ClaimingCollection claimingCollection, HttpStatus httpStatus) {
