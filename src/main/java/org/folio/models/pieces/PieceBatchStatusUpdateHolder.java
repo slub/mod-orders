@@ -1,27 +1,41 @@
 package org.folio.models.pieces;
 
-import lombok.AllArgsConstructor;
 import lombok.Getter;
 import org.apache.commons.collections4.CollectionUtils;
 import org.folio.rest.jaxrs.model.Piece;
 import org.folio.rest.jaxrs.model.PieceCollection;
+import org.folio.service.pieces.claiming.PieceClaimResolution;
 
 import java.util.List;
+import java.util.Map;
 
-@AllArgsConstructor
 public class PieceBatchStatusUpdateHolder extends BasePieceFlowHolder {
 
   @Getter
-  private Piece.ReceivingStatus receivingStatus;
+  private final Piece.ReceivingStatus receivingStatus;
   @Getter
-  private Integer claimingInterval;
+  private final Integer claimingInterval;
   @Getter
-  private String internalNote;
+  private final String internalNote;
   @Getter
-  private String externalNote;
+  private final String externalNote;
   @Getter
-  private List<Piece> pieces;
-  private String poLineId;
+  private final List<Piece> pieces;
+  private final String poLineId;
+  /**
+   * Claim resolutions of the pieces changing into 'Claim sent', by piece id; empty for other target statuses
+   */
+  private Map<String, PieceClaimResolution> claimResolutions = Map.of();
+
+  public PieceBatchStatusUpdateHolder(Piece.ReceivingStatus receivingStatus, Integer claimingInterval, String internalNote,
+                                      String externalNote, List<Piece> pieces, String poLineId) {
+    this.receivingStatus = receivingStatus;
+    this.claimingInterval = claimingInterval;
+    this.internalNote = internalNote;
+    this.externalNote = externalNote;
+    this.pieces = pieces;
+    this.poLineId = poLineId;
+  }
 
   @Override
   public String getOrderLineId() {
@@ -35,6 +49,18 @@ public class PieceBatchStatusUpdateHolder extends BasePieceFlowHolder {
 
   public PieceCollection getPieceCollection() {
     return new PieceCollection().withPieces(pieces).withTotalRecords(CollectionUtils.size(pieces));
+  }
+
+  public PieceBatchStatusUpdateHolder withClaimResolutions(Map<String, PieceClaimResolution> claimResolutions) {
+    this.claimResolutions = claimResolutions == null ? Map.of() : claimResolutions;
+    return this;
+  }
+
+  /**
+   * @return the claim resolution of the piece, null if the piece does not change into 'Claim sent'
+   */
+  public PieceClaimResolution getClaimResolution(String pieceId) {
+    return pieceId == null ? null : claimResolutions.get(pieceId);
   }
 
 }

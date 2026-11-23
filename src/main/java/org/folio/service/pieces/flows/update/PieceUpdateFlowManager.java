@@ -7,6 +7,7 @@ import static org.folio.service.orders.utils.StatusUtils.calculatePoLineReceiptS
 import static org.folio.service.pieces.PieceUtil.updatePieceStatus;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import lombok.extern.log4j.Log4j2;
@@ -34,6 +35,11 @@ import org.folio.service.pieces.PieceStorageService;
 import org.folio.service.pieces.PieceUtil;
 import org.folio.service.pieces.flows.BasePieceFlowHolderBuilder;
 import org.folio.service.pieces.flows.DefaultPieceFlowsValidator;
+import org.folio.service.pieces.claiming.ClaimConfigKey;
+import org.folio.service.pieces.claiming.ClaimResolutionService;
+import org.folio.service.pieces.claiming.ClaimSequenceErrors;
+import org.folio.service.pieces.claiming.ClaimTarget;
+import org.folio.service.pieces.claiming.PieceClaimResolution;
 
 import io.vertx.core.Future;
 import org.folio.service.titles.TitlesService;
@@ -52,11 +58,12 @@ public class PieceUpdateFlowManager {
   private final BasePieceFlowHolderBuilder basePieceFlowHolderBuilder;
   private final DefaultPieceFlowsValidator defaultPieceFlowsValidator;
   private final PurchaseOrderLineService purchaseOrderLineService;
+  private final ClaimResolutionService claimResolutionService;
 
   public PieceUpdateFlowManager(PieceStorageService pieceStorageService, PieceService pieceService, TitlesService titlesService, ProtectionService protectionService,
                                 PieceUpdateFlowPoLineService updatePoLineService, PieceUpdateFlowInventoryManager pieceUpdateFlowInventoryManager,
                                 BasePieceFlowHolderBuilder basePieceFlowHolderBuilder, DefaultPieceFlowsValidator defaultPieceFlowsValidator,
-                                PurchaseOrderLineService purchaseOrderLineService) {
+                                PurchaseOrderLineService purchaseOrderLineService, ClaimResolutionService claimResolutionService) {
     this.pieceStorageService = pieceStorageService;
     this.pieceService = pieceService;
     this.titlesService = titlesService;
@@ -66,6 +73,7 @@ public class PieceUpdateFlowManager {
     this.basePieceFlowHolderBuilder = basePieceFlowHolderBuilder;
     this.defaultPieceFlowsValidator = defaultPieceFlowsValidator;
     this.purchaseOrderLineService = purchaseOrderLineService;
+    this.claimResolutionService = claimResolutionService;
   }
 
   // Flow to update piece
@@ -101,6 +109,20 @@ public class PieceUpdateFlowManager {
 
   public Future<Void> updatePiecesStatuses(List<String> pieceIds, PieceBatchStatusCollection.ReceivingStatus receivingStatus,
                                            Integer claimingInterval, String internalNote, String externalNote, RequestContext requestContext) {
+    return updatePiecesStatuses(pieceIds, receivingStatus, claimingInterval, internalNote, externalNote, null, requestContext);
+  }
+
+  /**
+   * Updates the statuses of the pieces. For a change into 'Claim sent', pieces whose PO line has a claim sequence get
+   * the next stage and its interval.
+   *
+   * @param claimResolutions claim resolutions already worked out by the caller (e.g. {@code POST /orders/pieces/claim}),
+   *                         by piece id; null = resolve them here, rejecting pieces at an {@code INTEGRATION} stage
+   *                         with 422 {@code claimSequenceStageRequiresIntegration}, because this path never sends anything
+   */
+  public Future<Void> updatePiecesStatuses(List<String> pieceIds, PieceBatchStatusCollection.ReceivingStatus receivingStatus,
+                                           Integer claimingInterval, String internalNote, String externalNote,
+                                           Map<String, PieceClaimResolution> claimResolutions, RequestContext requestContext) {
     var newStatus = Piece.ReceivingStatus.fromValue(receivingStatus.value());
     return isOperationRestricted(pieceIds, requestContext)
       .compose(v -> pieceStorageService.getPiecesByIds(pieceIds, requestContext))
@@ -108,8 +130,15 @@ public class PieceUpdateFlowManager {
       .map(pieces -> pieces.stream().collect(Collectors.groupingBy(Piece::getPoLineId)))
       .map(piecesByPoLineId -> piecesByPoLineId.entrySet().stream()
         .map(entry -> new PieceBatchStatusUpdateHolder(newStatus, claimingInterval, internalNote, externalNote, entry.getValue(), entry.getKey()))
-        .map(holder -> basePieceFlowHolderBuilder.updateHolderWithOrderInformation(holder, requestContext)
-          .compose(v -> updatePoLineReceiptStatus(holder, holder.getPieces(), requestContext))
+        .toList())
+      // Load the order information of all PO lines first, so claim sequence stages are resolved before any write
+      .compose(holders -> HelperUtils.collectResultsOnSuccess(holders.stream()
+          .map(holder -> basePieceFlowHolderBuilder.updateHolderWithOrderInformation(holder, requestContext))
+          .toList())
+        .map(v -> holders))
+      .compose(holders -> applyClaimResolutions(holders, newStatus, claimResolutions, requestContext).map(v -> holders))
+      .map(holders -> holders.stream()
+        .map(holder -> updatePoLineReceiptStatus(holder, holder.getPieces(), requestContext)
           .compose(v -> savePoLineIfNeeded(holder, requestContext))
           .compose(v -> updatePiecesStatusesByPoLine(holder, requestContext)))
         .toList())
@@ -117,6 +146,40 @@ public class PieceUpdateFlowManager {
       .onSuccess(v -> log.info("Pieces statuses are updated for pieceIds: {} to status: {}", pieceIds, receivingStatus))
       .onFailure(t -> log.error("Failed to update pieces statuses for pieceIds: {} to status: {}", pieceIds, receivingStatus, t))
       .mapEmpty();
+  }
+
+  private Future<Void> applyClaimResolutions(List<PieceBatchStatusUpdateHolder> holders, Piece.ReceivingStatus newStatus,
+                                             Map<String, PieceClaimResolution> claimResolutions, RequestContext requestContext) {
+    if (newStatus != Piece.ReceivingStatus.CLAIM_SENT) {
+      return Future.succeededFuture();
+    }
+    if (claimResolutions != null) {
+      holders.forEach(holder -> holder.withClaimResolutions(claimResolutions));
+      return Future.succeededFuture();
+    }
+    var targets = holders.stream()
+      .flatMap(holder -> holder.getPieces().stream()
+        .map(piece -> new ClaimTarget(piece, holder.getOriginPoLine().getClaimSequenceId())))
+      .toList();
+    return claimResolutionService.resolve(targets, requestContext)
+      .compose(resolutions -> {
+        holders.forEach(holder -> holder.withClaimResolutions(resolutions));
+        var stageGroups = ClaimSequenceErrors.newStageGroups();
+        holders.forEach(holder -> holder.getPieces().forEach(piece -> {
+          var resolution = resolutions.get(piece.getId());
+          if (resolution != null && resolution.hasSequence() && !resolution.isManual()) {
+            var group = new ClaimConfigKey(holder.getOriginPurchaseOrder().getVendor(),
+              holder.getOriginPoLine().getAcquisitionMethod(), resolution.transmissionMethodValue());
+            ClaimSequenceErrors.addPiece(stageGroups, group, piece.getId());
+          }
+        }));
+        if (stageGroups.isEmpty()) {
+          return Future.succeededFuture();
+        }
+        log.info("applyClaimResolutions:: Pieces at an integration stage cannot be set to 'Claim sent' without sending a claim, groups: {}",
+          stageGroups.size());
+        return Future.failedFuture(ClaimSequenceErrors.unprocessable(ClaimSequenceErrors.stageRequiresIntegrationErrors(stageGroups)));
+      });
   }
 
   private <T extends BasePieceFlowHolder> Future<Void> updatePoLineReceiptStatus(T holder, List<Piece> piecesToUpdate,

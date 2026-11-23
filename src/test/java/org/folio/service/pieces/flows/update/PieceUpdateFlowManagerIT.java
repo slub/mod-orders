@@ -40,17 +40,24 @@ import org.folio.ApiTestSuiteIT;
 import org.folio.models.ItemStatus;
 import org.folio.models.pieces.PieceUpdateHolder;
 import org.folio.orders.utils.ProtectedOperationType;
+import org.folio.rest.acq.model.ClaimSequence;
+import org.folio.rest.acq.model.ClaimSequenceStage;
 import org.folio.rest.core.RestClient;
+import org.folio.rest.core.exceptions.ErrorCodes;
 import org.folio.rest.core.models.RequestContext;
 import org.folio.rest.jaxrs.model.Cost;
 import org.folio.rest.jaxrs.model.Eresource;
 import org.folio.rest.core.exceptions.HttpException;
 import org.folio.rest.jaxrs.model.Piece;
 import org.folio.rest.jaxrs.model.PieceBatchStatusCollection;
+import org.folio.rest.jaxrs.model.PieceClaim;
+import org.folio.rest.jaxrs.model.PieceClaimSequence;
+import org.folio.rest.jaxrs.model.PieceCollection;
 import org.folio.rest.jaxrs.model.PoLine;
 import org.folio.rest.jaxrs.model.PurchaseOrder;
 import org.folio.rest.jaxrs.model.Title;
 import org.folio.rest.jaxrs.model.acq.Location;
+import org.folio.service.ClaimSequenceService;
 import org.folio.service.ProtectionService;
 import org.folio.service.caches.InventoryCache;
 import org.folio.service.orders.PurchaseOrderLineService;
@@ -58,6 +65,7 @@ import org.folio.service.orders.PurchaseOrderStorageService;
 import org.folio.service.pieces.PieceService;
 import org.folio.service.pieces.PieceStorageService;
 import org.folio.service.pieces.flows.BasePieceFlowHolderBuilder;
+import org.folio.service.pieces.claiming.ClaimResolutionService;
 import org.folio.service.pieces.flows.DefaultPieceFlowsValidator;
 import org.folio.service.titles.TitlesService;
 import org.junit.jupiter.api.AfterAll;
@@ -86,6 +94,7 @@ public class PieceUpdateFlowManagerIT {
   @Autowired PieceUpdateFlowPoLineService pieceUpdateFlowPoLineService;
   @Autowired PurchaseOrderStorageService purchaseOrderStorageService;
   @Autowired PurchaseOrderLineService purchaseOrderLineService;
+  @Autowired ClaimSequenceService claimSequenceService;
 
   private final Context ctx = getFirstContextFromVertx(getVertx());
   @Mock private Map<String, String> okapiHeadersMock;
@@ -127,7 +136,8 @@ public class PieceUpdateFlowManagerIT {
         pieceUpdateFlowPoLineService,
         pieceUpdateFlowInventoryManager,
         basePieceFlowHolderBuilder,
-        purchaseOrderLineService);
+        purchaseOrderLineService,
+        claimSequenceService);
   }
 
   @Test
@@ -384,6 +394,196 @@ public class PieceUpdateFlowManagerIT {
     verify(pieceStorageService, never()).updatePiecesBatch(any(), any());
   }
 
+  @Test
+  void shouldClaimPiecesWithNextClaimSequenceStageAndOthersWithRequestInterval() {
+    var sequence = claimSequence(ClaimSequence.AfterLastStage.STOP, true);
+    var title = new Title().withId(UUID.randomUUID().toString()).withAcqUnitIds(List.of());
+    var purchaseOrder = new PurchaseOrder().withId(UUID.randomUUID().toString()).withVendor(UUID.randomUUID().toString());
+    var sequencePoLine = poLine(purchaseOrder).withClaimSequenceId(sequence.getId());
+    var otherPoLine = poLine(purchaseOrder);
+    var firstClaim = latePiece(sequencePoLine, title);
+    var secondClaim = latePiece(sequencePoLine, title).withClaim(claimingAt(sequence.getId(), 1));
+    var noSequencePiece = latePiece(otherPoLine, title).withClaim(claimingAt(UUID.randomUUID().toString(), 3));
+    var pieceIds = List.of(firstClaim.getId(), secondClaim.getId(), noSequencePiece.getId());
+    givenClaimFlow(pieceIds, List.of(firstClaim, secondClaim, noSequencePiece), title, purchaseOrder,
+        List.of(sequencePoLine, otherPoLine));
+    doReturn(succeededFuture(List.of(sequence)))
+        .when(claimSequenceService)
+        .getClaimSequencesByIds(List.of(sequence.getId()), requestContext);
+
+    var result = pieceUpdateFlowManager.updatePiecesStatuses(pieceIds,
+        PieceBatchStatusCollection.ReceivingStatus.CLAIM_SENT, 7, "internal", "external", requestContext);
+
+    assertTrue(result.succeeded());
+    var writtenById = writtenPieces(2);
+    assertEquals(3, writtenById.size());
+    assertEquals(1, writtenById.get(firstClaim.getId()).getClaim().getSequence().getStage());
+    assertEquals(sequence.getId(), writtenById.get(firstClaim.getId()).getClaim().getSequence().getId());
+    assertEquals(10, writtenById.get(firstClaim.getId()).getClaimingInterval());
+    // MANUAL stage: request notes are stored as for every other piece
+    assertEquals("internal", writtenById.get(firstClaim.getId()).getInternalNote());
+    assertEquals("external", writtenById.get(firstClaim.getId()).getExternalNote());
+    assertEquals(2, writtenById.get(secondClaim.getId()).getClaim().getSequence().getStage());
+    assertEquals(20, writtenById.get(secondClaim.getId()).getClaimingInterval());
+    assertEquals(Piece.ReceivingStatus.CLAIM_SENT, writtenById.get(secondClaim.getId()).getReceivingStatus());
+    // Without sequence on the PO line: request interval, stored claim sent back unchanged
+    assertEquals(7, writtenById.get(noSequencePiece.getId()).getClaimingInterval());
+    assertEquals(3, writtenById.get(noSequencePiece.getId()).getClaim().getSequence().getStage());
+  }
+
+  @Test
+  void shouldRejectBatchClaimSentAtIntegrationStageWithoutWriting() {
+    var sequence = new ClaimSequence()
+        .withId(UUID.randomUUID().toString())
+        .withIsActive(true)
+        .withStages(List.of(new ClaimSequenceStage().withStage(1).withName("Email claim").withInterval(10)
+            .withDeliveryType(ClaimSequenceStage.DeliveryType.INTEGRATION)
+            .withTransmissionMethod(ClaimSequenceStage.TransmissionMethod.EMAIL)));
+    var title = new Title().withId(UUID.randomUUID().toString()).withAcqUnitIds(List.of());
+    var vendorId = UUID.randomUUID().toString();
+    var purchaseOrder = new PurchaseOrder().withId(UUID.randomUUID().toString()).withVendor(vendorId);
+    var sequencePoLine = poLine(purchaseOrder).withClaimSequenceId(sequence.getId()).withAcquisitionMethod("purchase");
+    var otherPoLine = poLine(purchaseOrder);
+    var integrationPiece = latePiece(sequencePoLine, title);
+    var noSequencePiece = latePiece(otherPoLine, title);
+    var pieceIds = List.of(integrationPiece.getId(), noSequencePiece.getId());
+    givenClaimFlow(pieceIds, List.of(integrationPiece, noSequencePiece), title, purchaseOrder,
+        List.of(sequencePoLine, otherPoLine));
+    doReturn(succeededFuture(List.of(sequence)))
+        .when(claimSequenceService)
+        .getClaimSequencesByIds(List.of(sequence.getId()), requestContext);
+
+    var result = pieceUpdateFlowManager.updatePiecesStatuses(pieceIds,
+        PieceBatchStatusCollection.ReceivingStatus.CLAIM_SENT, 7, null, null, requestContext);
+
+    assertTrue(result.failed());
+    var exception = (HttpException) result.cause();
+    assertEquals(422, exception.getCode());
+    var error = exception.getErrors().getErrors().getFirst();
+    assertEquals(ErrorCodes.CLAIM_SEQUENCE_STAGE_REQUIRES_INTEGRATION.getCode(), error.getCode());
+    var parameters = error.getParameters().stream().map(p -> p.getKey() + "=" + p.getValue()).toList();
+    assertEquals(List.of("vendorId=" + vendorId, "acquisitionMethod=purchase", "transmissionMethod=Email",
+        "pieceId=" + integrationPiece.getId()), parameters);
+    verify(pieceStorageService, never()).updatePiecesBatch(any(), any());
+  }
+
+  @Test
+  void shouldRejectClaimWithoutWritingWhenClaimSequenceIsCompletedInactiveOrNotFound() {
+    var sequence = claimSequence(ClaimSequence.AfterLastStage.STOP, true);
+    var inactiveSequence = claimSequence(ClaimSequence.AfterLastStage.STOP, false);
+    var missingSequenceId = UUID.randomUUID().toString();
+    var title = new Title().withId(UUID.randomUUID().toString()).withAcqUnitIds(List.of());
+    var purchaseOrder = new PurchaseOrder().withId(UUID.randomUUID().toString()).withVendor(UUID.randomUUID().toString());
+    var sequencePoLine = poLine(purchaseOrder).withClaimSequenceId(sequence.getId());
+    var inactivePoLine = poLine(purchaseOrder).withClaimSequenceId(inactiveSequence.getId());
+    var missingPoLine = poLine(purchaseOrder).withClaimSequenceId(missingSequenceId);
+    var otherPoLine = poLine(purchaseOrder);
+    var completedPiece = latePiece(sequencePoLine, title).withClaim(claimingAt(sequence.getId(), 2));
+    var inactivePiece = latePiece(inactivePoLine, title);
+    var missingPiece = latePiece(missingPoLine, title);
+    var noSequencePiece = latePiece(otherPoLine, title);
+    var pieces = List.of(completedPiece, inactivePiece, missingPiece, noSequencePiece);
+    var pieceIds = pieces.stream().map(Piece::getId).toList();
+    givenClaimFlow(pieceIds, pieces, title, purchaseOrder, List.of(sequencePoLine, inactivePoLine, missingPoLine, otherPoLine));
+    doReturn(succeededFuture(List.of(sequence, inactiveSequence)))
+        .when(claimSequenceService)
+        .getClaimSequencesByIds(any(), eq(requestContext));
+
+    var result = pieceUpdateFlowManager.updatePiecesStatuses(pieceIds,
+        PieceBatchStatusCollection.ReceivingStatus.CLAIM_SENT, 7, null, null, requestContext);
+
+    assertTrue(result.failed());
+    var exception = (HttpException) result.cause();
+    assertEquals(400, exception.getCode());
+    var errors = exception.getErrors().getErrors().stream()
+        .collect(java.util.stream.Collectors.toMap(e -> e.getParameters().getFirst().getValue(), e -> e.getCode()));
+    assertEquals(Map.of(
+        completedPiece.getId(), ErrorCodes.CLAIM_SEQUENCE_COMPLETED.getCode(),
+        inactivePiece.getId(), ErrorCodes.CLAIM_SEQUENCE_INACTIVE.getCode(),
+        missingPiece.getId(), ErrorCodes.CLAIM_SEQUENCE_NOT_FOUND.getCode()), errors);
+    // One storage request for all sequences of the request
+    verify(claimSequenceService).getClaimSequencesByIds(any(), eq(requestContext));
+    verify(pieceStorageService, never()).updatePiecesBatch(any(), any());
+  }
+
+  @Test
+  void shouldNotTouchClaimSequenceForOtherTargetStatuses() {
+    var sequence = claimSequence(ClaimSequence.AfterLastStage.STOP, true);
+    var title = new Title().withId(UUID.randomUUID().toString()).withAcqUnitIds(List.of());
+    var purchaseOrder = new PurchaseOrder().withId(UUID.randomUUID().toString()).withVendor(UUID.randomUUID().toString());
+    var sequencePoLine = poLine(purchaseOrder).withClaimSequenceId(sequence.getId());
+    var piece = latePiece(sequencePoLine, title).withClaim(claimingAt(sequence.getId(), 1));
+    givenClaimFlow(List.of(piece.getId()), List.of(piece), title, purchaseOrder, List.of(sequencePoLine));
+
+    var result = pieceUpdateFlowManager.updatePiecesStatuses(List.of(piece.getId()),
+        PieceBatchStatusCollection.ReceivingStatus.CLAIM_DELAYED, 7, null, null, requestContext);
+
+    assertTrue(result.succeeded());
+    verify(claimSequenceService, never()).getClaimSequencesByIds(any(), any());
+    var written = writtenPieces(1).get(piece.getId());
+    assertEquals(1, written.getClaim().getSequence().getStage());
+    assertEquals(7, written.getClaimingInterval());
+  }
+
+  private Map<String, Piece> writtenPieces(int expectedBatchCalls) {
+    ArgumentCaptor<PieceCollection> batchCaptor = ArgumentCaptor.forClass(PieceCollection.class);
+    verify(pieceStorageService, Mockito.times(expectedBatchCalls)).updatePiecesBatch(batchCaptor.capture(), eq(requestContext));
+    return batchCaptor.getAllValues().stream()
+        .flatMap(collection -> collection.getPieces().stream())
+        .collect(java.util.stream.Collectors.toMap(Piece::getId, piece -> piece));
+  }
+
+  private void givenClaimFlow(List<String> pieceIds, List<Piece> pieces, Title title, PurchaseOrder purchaseOrder,
+      List<PoLine> poLines) {
+    doReturn(succeededFuture(pieces)).when(pieceStorageService).getPiecesByIds(pieceIds, requestContext);
+    doReturn(succeededFuture(List.of(title))).when(titlesService).getTitlesByPieceIds(pieceIds, requestContext);
+    doReturn(succeededFuture())
+        .when(protectionService)
+        .isOperationRestricted(title.getAcqUnitIds(), ProtectedOperationType.UPDATE, requestContext);
+    poLines.forEach(poLine -> doReturn(succeededFuture(poLine))
+        .when(purchaseOrderLineService)
+        .getOrderLineById(poLine.getId(), requestContext));
+    doReturn(succeededFuture(purchaseOrder))
+        .when(purchaseOrderStorageService)
+        .getPurchaseOrderById(purchaseOrder.getId(), requestContext);
+    doReturn(succeededFuture()).when(pieceStorageService).updatePiecesBatch(any(), eq(requestContext));
+    doNothing().when(pieceService).receiptConsistencyPiecePoLine(anyString(), eq(requestContext));
+  }
+
+  private static PieceClaim claimingAt(String claimSequenceId, int stage) {
+    return new PieceClaim().withSequence(new PieceClaimSequence().withId(claimSequenceId).withStage(stage));
+  }
+
+  private static PoLine poLine(PurchaseOrder purchaseOrder) {
+    return new PoLine()
+        .withId(UUID.randomUUID().toString())
+        .withOrderFormat(PoLine.OrderFormat.P_E_MIX)
+        .withPurchaseOrderId(purchaseOrder.getId());
+  }
+
+  private static Piece latePiece(PoLine poLine, Title title) {
+    return new Piece()
+        .withId(UUID.randomUUID().toString())
+        .withPoLineId(poLine.getId())
+        .withTitleId(title.getId())
+        .withReceivingStatus(Piece.ReceivingStatus.LATE);
+  }
+
+  /**
+   * Stage 1 MANUAL (10 days), stage 2 MANUAL (20 days): the batch status path allows manual stages only.
+   */
+  private static ClaimSequence claimSequence(ClaimSequence.AfterLastStage afterLastStage, boolean isActive) {
+    return new ClaimSequence()
+        .withId(UUID.randomUUID().toString())
+        .withIsActive(isActive)
+        .withAfterLastStage(afterLastStage)
+        .withStages(List.of(
+            new ClaimSequenceStage().withStage(1).withName("Phone").withInterval(10)
+                .withDeliveryType(ClaimSequenceStage.DeliveryType.MANUAL),
+            new ClaimSequenceStage().withStage(2).withName("Letter").withInterval(20)
+                .withDeliveryType(ClaimSequenceStage.DeliveryType.MANUAL)));
+  }
+
   private void givenPoLineHasPieces(String lineId, List<Piece> pieces) {
     doReturn(succeededFuture(pieces))
         .when(pieceStorageService)
@@ -466,7 +666,8 @@ public class PieceUpdateFlowManagerIT {
         PieceUpdateFlowInventoryManager pieceUpdateFlowInventoryManager,
         BasePieceFlowHolderBuilder basePieceFlowHolderBuilder,
         DefaultPieceFlowsValidator defaultPieceFlowsValidator,
-        PurchaseOrderLineService purchaseOrderLineService) {
+        PurchaseOrderLineService purchaseOrderLineService,
+        ClaimResolutionService claimResolutionService) {
       return new PieceUpdateFlowManager(
           pieceStorageService,
           pieceService,
@@ -476,7 +677,18 @@ public class PieceUpdateFlowManagerIT {
           pieceUpdateFlowInventoryManager,
           basePieceFlowHolderBuilder,
           defaultPieceFlowsValidator,
-          purchaseOrderLineService);
+          purchaseOrderLineService,
+          claimResolutionService);
+    }
+
+    @Bean
+    ClaimSequenceService claimSequenceService() {
+      return mock(ClaimSequenceService.class);
+    }
+
+    @Bean
+    ClaimResolutionService claimResolutionService(ClaimSequenceService claimSequenceService) {
+      return new ClaimResolutionService(claimSequenceService);
     }
   }
 }

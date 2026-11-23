@@ -159,7 +159,7 @@
     },
     {
       "id": "order-lines",
-      "version": "4.1",
+      "version": "4.2",
       "handlers": [
         {
           "methods": [
@@ -680,6 +680,7 @@
             "orders-storage.pieces.item.put",
             "orders-storage.pieces.collection.get",
             "orders-storage.pieces-batch.collection.put",
+            "orders-storage.claim-sequences.collection.get",
             "orders-storage.po-lines.item.get",
             "orders-storage.po-lines.item.put",
             "orders-storage.po-lines.collection.get",
@@ -1290,7 +1291,7 @@
     },
     {
       "id": "pieces.send-claims",
-      "version": "1.0",
+      "version": "1.1",
       "handlers": [
         {
           "methods": ["POST"],
@@ -1302,6 +1303,8 @@
             "locale.item.get",
             "orders-storage.pieces.collection.get",
             "orders-storage.pieces.item.put",
+            "orders-storage.pieces-batch.collection.put",
+            "orders-storage.claim-sequences.collection.get",
             "orders-storage.po-lines.item.get",
             "orders-storage.po-lines.item.put",
             "orders-storage.purchase-orders.item.get",
@@ -1373,7 +1376,11 @@
     },
     {
       "id": "orders-storage.pieces",
-      "version": "5.0"
+      "version": "5.1"
+    },
+    {
+      "id": "orders-storage.claim-sequences",
+      "version": "1.0"
     },
     {
       "id": "orders-storage.wrapper-pieces",
@@ -1385,7 +1392,7 @@
     },
     {
       "id": "orders-storage.po-lines",
-      "version": "13.1"
+      "version": "13.2"
     },
     {
       "id": "orders-storage.order-templates",

@@ -82,6 +82,7 @@ import static org.folio.orders.utils.ResourcePathResolver.ORDER_TEMPLATES;
 import static org.folio.orders.utils.ResourcePathResolver.ORGANIZATION_STORAGE;
 import static org.folio.orders.utils.ResourcePathResolver.PIECES_STORAGE;
 import static org.folio.orders.utils.ResourcePathResolver.PIECES_STORAGE_BATCH;
+import static org.folio.orders.utils.ResourcePathResolver.CLAIM_SEQUENCES;
 import static org.folio.orders.utils.ResourcePathResolver.PO_LINES_BATCH_STORAGE;
 import static org.folio.orders.utils.ResourcePathResolver.PO_LINES_STORAGE;
 import static org.folio.orders.utils.ResourcePathResolver.PO_LINE_NUMBER;
@@ -703,6 +704,7 @@ public class MockServer {
     router.get(resourcesPath(TAGS)).handler(ctx -> handleGetGenericSubObj(ctx, TAGS));
     router.get("/invoice/invoice-lines").handler(this::handleGetInvoiceLines);
     router.get(resourcesPath(ACQUISITION_METHODS)).handler(this::handleGetAcquisitionMethods);
+    router.get(resourcesPath(CLAIM_SEQUENCES)).handler(this::handleGetClaimSequences);
     router.get(resourcePath(ACQUISITION_METHODS)).handler(this::handleGetAcquisitionMethod);
     router.get(resourcesPath(EXPORT_HISTORY)).handler(this::handleGetExportHistoryMethod);
     router.get("/data-import-profiles/jobProfileSnapshots/:id").handler(this::handleGetJobProfileSnapshotById);
@@ -1688,9 +1690,15 @@ public class MockServer {
       var configVendorId = config.getJsonObject(EXPORT_TYPE_SPECIFIC_PARAMETERS.getValue())
         .getJsonObject(VENDOR_EDI_ORDERS_EXPORT_CONFIG.getValue())
         .getString("vendorId");
+      var configTransmissionMethod = config.getJsonObject(EXPORT_TYPE_SPECIFIC_PARAMETERS.getValue())
+        .getJsonObject(VENDOR_EDI_ORDERS_EXPORT_CONFIG.getValue())
+        .getString("transmissionMethod");
+      var transmissionMethod = ctx.request().getParam("transmissionMethod");
+      addServerRqQuery(DATA_EXPORT_SPRING_EFFECTIVE_CONFIGS, ctx.request().query());
       var tenant = ctx.request().getHeader(OKAPI_HEADER_TENANT);
       var matches = !EXIST_CONFIG_X_OKAPI_TENANT_LIMIT_10.getValue().equals(tenant)
-        && configVendorId.equals(ctx.request().getParam("vendorId"));
+        && configVendorId.equals(ctx.request().getParam("vendorId"))
+        && (transmissionMethod == null || transmissionMethod.equals(configTransmissionMethod));
       serverResponse(ctx, 200, APPLICATION_JSON, JsonObject.of(CONFIGS.getValue(), matches ? JsonArray.of(config) : new JsonArray()).encode());
     } catch (IOException e) {
       serverResponse(ctx, 500, APPLICATION_JSON, INTERNAL_SERVER_ERROR.getReasonPhrase());
@@ -2215,6 +2223,19 @@ public class MockServer {
     ctx.response().putHeader(HttpHeaders.CONTENT_TYPE, APPLICATION_JSON)
       .setStatusCode(204)
       .end();
+  }
+
+  private void handleGetClaimSequences(RoutingContext ctx) {
+    String query = StringUtils.trimToEmpty(ctx.request().getParam(QUERY));
+    logger.info("handleGetClaimSequences got: {}?query={}", ctx.request().path(), query);
+    addServerRqQuery(CLAIM_SEQUENCES, query);
+    // Mock entries are added by the tests with addMockEntry(CLAIM_SEQUENCES, ...)
+    var claimSequences = getRqRsEntries(HttpMethod.SEARCH, CLAIM_SEQUENCES).stream()
+      .filter(claimSequence -> query.contains(claimSequence.getString(ID)))
+      .toList();
+    var collection = new JsonObject().put("claimSequences", new JsonArray(claimSequences)).put("totalRecords", claimSequences.size());
+    addServerRqRsData(HttpMethod.GET, CLAIM_SEQUENCES, collection);
+    serverResponse(ctx, 200, APPLICATION_JSON, collection.encodePrettily());
   }
 
   private static void addServerRqRsData(HttpMethod method, String objName, JsonObject data) {
