@@ -20,6 +20,7 @@ import org.folio.rest.jaxrs.model.Error;
 import org.folio.rest.jaxrs.model.Errors;
 import org.folio.rest.jaxrs.model.Parameter;
 import org.folio.rest.jaxrs.model.Piece;
+import org.folio.rest.jaxrs.model.PieceClaimingSequence;
 import org.folio.service.caches.ExportConfigsCache;
 import org.folio.service.orders.PurchaseOrderLineService;
 import org.folio.service.orders.PurchaseOrderStorageService;
@@ -287,14 +288,14 @@ public class PiecesClaimingService {
   private static ClaimingPieceResult createSuccessClaimingResult(String pieceId, PieceClaimResolution resolution, Integer requestClaimingInterval) {
     var result = new ClaimingPieceResult().withPieceId(pieceId).withStatus(SUCCESS)
       .withDeliveryType(ClaimingPieceResult.DeliveryType.fromValue(resolution.deliveryType().value()))
-      .withClaimingInterval(resolution.claimingInterval(requestClaimingInterval));
+      .withInterval(resolution.claimingInterval(requestClaimingInterval));
     if (resolution.transmissionMethod() != null) {
       result.setTransmissionMethod(ClaimingPieceResult.TransmissionMethod.fromValue(resolution.transmissionMethod().value()));
     }
     if (resolution.hasSequence()) {
-      result.withClaimSequenceId(resolution.claimSequenceId())
-        .withStage(resolution.stage())
-        .withStageName(resolution.sequenceStage().getName());
+      result.withSequence(new PieceClaimingSequence()
+        .withId(resolution.claimSequenceId())
+        .withStage(resolution.stage()));
     }
     return result;
   }

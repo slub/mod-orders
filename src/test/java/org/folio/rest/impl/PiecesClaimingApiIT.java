@@ -302,10 +302,9 @@ public class PiecesClaimingApiIT {
     assertThat(result.getStatus(), is(SUCCESS));
     assertThat(result.getDeliveryType().value(), is(expectedDeliveryType));
     assertThat(result.getTransmissionMethod() == null ? null : result.getTransmissionMethod().value(), is(expectedTransmissionMethod));
-    assertThat(result.getClaimSequenceId(), is(claimSequence.getId()));
-    assertThat(result.getStage(), is(expectedStage));
-    assertThat(result.getStageName(), is(claimSequence.getStages().get(expectedStage - 1).getName()));
-    assertThat(result.getClaimingInterval(), is(expectedInterval));
+    assertThat(result.getSequence().getId(), is(claimSequence.getId()));
+    assertThat(result.getSequence().getStage(), is(expectedStage));
+    assertThat(result.getInterval(), is(expectedInterval));
   }
 
   @Test

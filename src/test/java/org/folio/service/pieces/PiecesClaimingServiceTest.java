@@ -638,18 +638,17 @@ public class PiecesClaimingServiceTest {
         var manual = results.get("pieceId1");
         assertEquals(ClaimingPieceResult.DeliveryType.MANUAL, manual.getDeliveryType());
         assertEquals(null, manual.getTransmissionMethod());
-        assertEquals(MANUAL_SEQUENCE_ID, manual.getClaimSequenceId());
-        assertEquals(1, manual.getStage());
-        assertEquals("Phone", manual.getStageName());
-        assertEquals(14, manual.getClaimingInterval());
+        assertEquals(MANUAL_SEQUENCE_ID, manual.getSequence().getId());
+        assertEquals(1, manual.getSequence().getStage());
+        assertEquals(14, manual.getInterval());
         var ftp = results.get("pieceId3");
         assertEquals(ClaimingPieceResult.DeliveryType.INTEGRATION, ftp.getDeliveryType());
         assertEquals(ClaimingPieceResult.TransmissionMethod.FTP, ftp.getTransmissionMethod());
-        assertEquals(30, ftp.getClaimingInterval());
+        assertEquals(30, ftp.getInterval());
         var noSequence = results.get("pieceId4");
         assertEquals(ClaimingPieceResult.DeliveryType.INTEGRATION, noSequence.getDeliveryType());
-        assertEquals(null, noSequence.getClaimSequenceId());
-        assertEquals(5, noSequence.getClaimingInterval());
+        assertEquals(null, noSequence.getSequence());
+        assertEquals(5, noSequence.getInterval());
 
         // One update for all pieces, with the resolutions worked out before the config lookup
         @SuppressWarnings("unchecked")
