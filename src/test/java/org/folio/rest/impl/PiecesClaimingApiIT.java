@@ -13,8 +13,8 @@ import org.folio.rest.jaxrs.model.ClaimingPieceResult;
 import org.folio.rest.jaxrs.model.ClaimingResults;
 import org.folio.rest.jaxrs.model.PoLine;
 import org.folio.rest.jaxrs.model.Piece;
-import org.folio.rest.jaxrs.model.PieceClaiming;
-import org.folio.rest.jaxrs.model.PieceClaimingSequence;
+import org.folio.rest.jaxrs.model.PieceClaim;
+import org.folio.rest.jaxrs.model.PieceClaimSequence;
 import org.folio.rest.jaxrs.model.PieceCollection;
 import org.folio.rest.acq.model.ClaimSequence;
 import org.folio.rest.acq.model.ClaimSequenceStage;
@@ -280,8 +280,8 @@ public class PiecesClaimingApiIT {
     var claimedPiece = pieceUpdates.getFirst().mapTo(PieceCollection.class).getPieces().getFirst();
     assertThat(claimedPiece.getId(), is(piece.getId()));
     assertThat(claimedPiece.getReceivingStatus(), is(Piece.ReceivingStatus.CLAIM_SENT));
-    assertThat(claimedPiece.getClaiming().getSequence().getId(), is(claimSequence.getId()));
-    assertThat(claimedPiece.getClaiming().getSequence().getStage(), is(expectedStage));
+    assertThat(claimedPiece.getClaim().getSequence().getId(), is(claimSequence.getId()));
+    assertThat(claimedPiece.getClaim().getSequence().getStage(), is(expectedStage));
     assertThat(claimedPiece.getClaimingInterval(), is(expectedInterval));
 
     var effectiveConfigsQueries = getQueryParams(DATA_EXPORT_SPRING_EFFECTIVE_CONFIGS);
@@ -359,7 +359,7 @@ public class PiecesClaimingApiIT {
       .getJsonArray(PIECES_KEY).getJsonObject(69)
       .mapTo(Piece.class);
     if (storedStage != null) {
-      piece.withClaiming(new PieceClaiming().withSequence(new PieceClaimingSequence().withId(claimSequence.getId()).withStage(storedStage)));
+      piece.withClaim(new PieceClaim().withSequence(new PieceClaimSequence().withId(claimSequence.getId()).withStage(storedStage)));
     }
 
     addMockEntry(ORGANIZATION_STORAGE, organization);

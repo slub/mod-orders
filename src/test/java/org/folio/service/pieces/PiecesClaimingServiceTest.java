@@ -18,8 +18,8 @@ import org.folio.rest.jaxrs.model.PoLine;
 import org.folio.rest.jaxrs.model.PurchaseOrder;
 import org.folio.rest.acq.model.ClaimSequence;
 import org.folio.rest.acq.model.ClaimSequenceStage;
-import org.folio.rest.jaxrs.model.PieceClaiming;
-import org.folio.rest.jaxrs.model.PieceClaimingSequence;
+import org.folio.rest.jaxrs.model.PieceClaim;
+import org.folio.rest.jaxrs.model.PieceClaimSequence;
 import org.folio.service.ClaimSequenceService;
 import org.folio.service.caches.ExportConfigsCache;
 import org.folio.service.pieces.claiming.ClaimResolutionService;
@@ -723,7 +723,7 @@ public class PiecesClaimingServiceTest {
     // pieceId1 already claimed at the only stage of a STOP sequence
     var pieces = List.of(
       new Piece().withId("pieceId1").withPoLineId("pieceId1").withReceivingStatus(Piece.ReceivingStatus.LATE)
-        .withClaiming(new PieceClaiming().withSequence(new PieceClaimingSequence().withId(MANUAL_SEQUENCE_ID).withStage(1))),
+        .withClaim(new PieceClaim().withSequence(new PieceClaimSequence().withId(MANUAL_SEQUENCE_ID).withStage(1))),
       new Piece().withId("pieceId2").withPoLineId("pieceId2").withReceivingStatus(Piece.ReceivingStatus.LATE));
     doReturn(Future.succeededFuture(pieces)).when(pieceStorageService).getPiecesByIds(any(), any());
 

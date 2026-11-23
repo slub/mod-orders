@@ -12,8 +12,8 @@ import java.util.UUID;
 import org.folio.rest.acq.model.ClaimSequence;
 import org.folio.rest.acq.model.ClaimSequenceStage;
 import org.folio.rest.jaxrs.model.Piece;
-import org.folio.rest.jaxrs.model.PieceClaiming;
-import org.folio.rest.jaxrs.model.PieceClaimingSequence;
+import org.folio.rest.jaxrs.model.PieceClaim;
+import org.folio.rest.jaxrs.model.PieceClaimSequence;
 import org.junit.jupiter.api.Test;
 
 public class ClaimSequenceStageResolverTest {
@@ -33,7 +33,7 @@ public class ClaimSequenceStageResolverTest {
   @Test
   void returnsFirstStageWhenPieceHasSequenceWithoutStage() {
     var sequence = sequence(ClaimSequence.AfterLastStage.STOP);
-    var piece = new Piece().withClaiming(new PieceClaiming().withSequence(new PieceClaimingSequence().withId(SEQUENCE_ID)));
+    var piece = new Piece().withClaim(new PieceClaim().withSequence(new PieceClaimSequence().withId(SEQUENCE_ID)));
 
     var resolution = ClaimSequenceStageResolver.resolve(piece, sequence);
 
@@ -100,7 +100,7 @@ public class ClaimSequenceStageResolverTest {
   }
 
   private static Piece pieceAt(String claimSequenceId, int stage) {
-    return new Piece().withClaiming(new PieceClaiming().withSequence(new PieceClaimingSequence().withId(claimSequenceId).withStage(stage)));
+    return new Piece().withClaim(new PieceClaim().withSequence(new PieceClaimSequence().withId(claimSequenceId).withStage(stage)));
   }
 
   private static ClaimSequence sequence(ClaimSequence.AfterLastStage afterLastStage) {

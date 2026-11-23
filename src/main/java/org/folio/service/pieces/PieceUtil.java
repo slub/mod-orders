@@ -22,8 +22,8 @@ import org.folio.rest.jaxrs.model.PoLine;
 import org.folio.rest.jaxrs.model.Eresource;
 import org.folio.rest.jaxrs.model.Physical;
 import org.folio.rest.jaxrs.model.Piece;
-import org.folio.rest.jaxrs.model.PieceClaiming;
-import org.folio.rest.jaxrs.model.PieceClaimingSequence;
+import org.folio.rest.jaxrs.model.PieceClaim;
+import org.folio.rest.jaxrs.model.PieceClaimSequence;
 import org.folio.rest.jaxrs.model.acq.Location;
 import org.folio.rest.tools.utils.TenantTool;
 
@@ -106,8 +106,8 @@ public class PieceUtil {
     if (isStatusChanged && holder.getReceivingStatus() == Piece.ReceivingStatus.CLAIM_SENT
       && claimResolution != null && claimResolution.hasSequence()) {
       // The claim sequence stage wins over the requested interval
-      piece.setClaiming(Optional.ofNullable(piece.getClaiming()).orElseGet(PieceClaiming::new)
-        .withSequence(new PieceClaimingSequence()
+      piece.setClaim(Optional.ofNullable(piece.getClaim()).orElseGet(PieceClaim::new)
+        .withSequence(new PieceClaimSequence()
           .withId(claimResolution.claimSequenceId())
           .withStage(claimResolution.stage())));
       piece.setClaimingInterval(claimResolution.sequenceStage().getInterval());

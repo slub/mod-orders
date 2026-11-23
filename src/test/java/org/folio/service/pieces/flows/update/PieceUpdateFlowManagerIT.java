@@ -50,8 +50,8 @@ import org.folio.rest.jaxrs.model.Eresource;
 import org.folio.rest.core.exceptions.HttpException;
 import org.folio.rest.jaxrs.model.Piece;
 import org.folio.rest.jaxrs.model.PieceBatchStatusCollection;
-import org.folio.rest.jaxrs.model.PieceClaiming;
-import org.folio.rest.jaxrs.model.PieceClaimingSequence;
+import org.folio.rest.jaxrs.model.PieceClaim;
+import org.folio.rest.jaxrs.model.PieceClaimSequence;
 import org.folio.rest.jaxrs.model.PieceCollection;
 import org.folio.rest.jaxrs.model.PoLine;
 import org.folio.rest.jaxrs.model.PurchaseOrder;
@@ -402,8 +402,8 @@ public class PieceUpdateFlowManagerIT {
     var sequencePoLine = poLine(purchaseOrder).withClaimSequenceId(sequence.getId());
     var otherPoLine = poLine(purchaseOrder);
     var firstClaim = latePiece(sequencePoLine, title);
-    var secondClaim = latePiece(sequencePoLine, title).withClaiming(claimingAt(sequence.getId(), 1));
-    var noSequencePiece = latePiece(otherPoLine, title).withClaiming(claimingAt(UUID.randomUUID().toString(), 3));
+    var secondClaim = latePiece(sequencePoLine, title).withClaim(claimingAt(sequence.getId(), 1));
+    var noSequencePiece = latePiece(otherPoLine, title).withClaim(claimingAt(UUID.randomUUID().toString(), 3));
     var pieceIds = List.of(firstClaim.getId(), secondClaim.getId(), noSequencePiece.getId());
     givenClaimFlow(pieceIds, List.of(firstClaim, secondClaim, noSequencePiece), title, purchaseOrder,
         List.of(sequencePoLine, otherPoLine));
@@ -417,18 +417,18 @@ public class PieceUpdateFlowManagerIT {
     assertTrue(result.succeeded());
     var writtenById = writtenPieces(2);
     assertEquals(3, writtenById.size());
-    assertEquals(1, writtenById.get(firstClaim.getId()).getClaiming().getSequence().getStage());
-    assertEquals(sequence.getId(), writtenById.get(firstClaim.getId()).getClaiming().getSequence().getId());
+    assertEquals(1, writtenById.get(firstClaim.getId()).getClaim().getSequence().getStage());
+    assertEquals(sequence.getId(), writtenById.get(firstClaim.getId()).getClaim().getSequence().getId());
     assertEquals(10, writtenById.get(firstClaim.getId()).getClaimingInterval());
     // MANUAL stage: request notes are stored as for every other piece
     assertEquals("internal", writtenById.get(firstClaim.getId()).getInternalNote());
     assertEquals("external", writtenById.get(firstClaim.getId()).getExternalNote());
-    assertEquals(2, writtenById.get(secondClaim.getId()).getClaiming().getSequence().getStage());
+    assertEquals(2, writtenById.get(secondClaim.getId()).getClaim().getSequence().getStage());
     assertEquals(20, writtenById.get(secondClaim.getId()).getClaimingInterval());
     assertEquals(Piece.ReceivingStatus.CLAIM_SENT, writtenById.get(secondClaim.getId()).getReceivingStatus());
-    // Without sequence on the PO line: request interval, stored claiming sent back unchanged
+    // Without sequence on the PO line: request interval, stored claim sent back unchanged
     assertEquals(7, writtenById.get(noSequencePiece.getId()).getClaimingInterval());
-    assertEquals(3, writtenById.get(noSequencePiece.getId()).getClaiming().getSequence().getStage());
+    assertEquals(3, writtenById.get(noSequencePiece.getId()).getClaim().getSequence().getStage());
   }
 
   @Test
@@ -478,7 +478,7 @@ public class PieceUpdateFlowManagerIT {
     var inactivePoLine = poLine(purchaseOrder).withClaimSequenceId(inactiveSequence.getId());
     var missingPoLine = poLine(purchaseOrder).withClaimSequenceId(missingSequenceId);
     var otherPoLine = poLine(purchaseOrder);
-    var completedPiece = latePiece(sequencePoLine, title).withClaiming(claimingAt(sequence.getId(), 2));
+    var completedPiece = latePiece(sequencePoLine, title).withClaim(claimingAt(sequence.getId(), 2));
     var inactivePiece = latePiece(inactivePoLine, title);
     var missingPiece = latePiece(missingPoLine, title);
     var noSequencePiece = latePiece(otherPoLine, title);
@@ -512,7 +512,7 @@ public class PieceUpdateFlowManagerIT {
     var title = new Title().withId(UUID.randomUUID().toString()).withAcqUnitIds(List.of());
     var purchaseOrder = new PurchaseOrder().withId(UUID.randomUUID().toString()).withVendor(UUID.randomUUID().toString());
     var sequencePoLine = poLine(purchaseOrder).withClaimSequenceId(sequence.getId());
-    var piece = latePiece(sequencePoLine, title).withClaiming(claimingAt(sequence.getId(), 1));
+    var piece = latePiece(sequencePoLine, title).withClaim(claimingAt(sequence.getId(), 1));
     givenClaimFlow(List.of(piece.getId()), List.of(piece), title, purchaseOrder, List.of(sequencePoLine));
 
     var result = pieceUpdateFlowManager.updatePiecesStatuses(List.of(piece.getId()),
@@ -521,7 +521,7 @@ public class PieceUpdateFlowManagerIT {
     assertTrue(result.succeeded());
     verify(claimSequenceService, never()).getClaimSequencesByIds(any(), any());
     var written = writtenPieces(1).get(piece.getId());
-    assertEquals(1, written.getClaiming().getSequence().getStage());
+    assertEquals(1, written.getClaim().getSequence().getStage());
     assertEquals(7, written.getClaimingInterval());
   }
 
@@ -550,8 +550,8 @@ public class PieceUpdateFlowManagerIT {
     doNothing().when(pieceService).receiptConsistencyPiecePoLine(anyString(), eq(requestContext));
   }
 
-  private static PieceClaiming claimingAt(String claimSequenceId, int stage) {
-    return new PieceClaiming().withSequence(new PieceClaimingSequence().withId(claimSequenceId).withStage(stage));
+  private static PieceClaim claimingAt(String claimSequenceId, int stage) {
+    return new PieceClaim().withSequence(new PieceClaimSequence().withId(claimSequenceId).withStage(stage));
   }
 
   private static PoLine poLine(PurchaseOrder purchaseOrder) {

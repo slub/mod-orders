@@ -5,8 +5,8 @@ import org.folio.models.pieces.PieceBatchStatusUpdateHolder;
 import org.folio.rest.acq.model.ClaimSequenceStage;
 import org.folio.rest.jaxrs.model.Physical;
 import org.folio.rest.jaxrs.model.Piece;
-import org.folio.rest.jaxrs.model.PieceClaiming;
-import org.folio.rest.jaxrs.model.PieceClaimingSequence;
+import org.folio.rest.jaxrs.model.PieceClaim;
+import org.folio.rest.jaxrs.model.PieceClaimSequence;
 import org.folio.service.pieces.claiming.PieceClaimResolution;
 import org.folio.rest.jaxrs.model.PoLine;
 import org.folio.rest.jaxrs.model.acq.Location;
@@ -65,34 +65,34 @@ public class PieceUtilTest {
     assertTrue(statusChanged);
     assertEquals(Piece.ReceivingStatus.CLAIM_SENT, piece.getReceivingStatus());
     assertEquals(45, piece.getClaimingInterval());
-    assertEquals(claimSequenceId, piece.getClaiming().getSequence().getId());
-    assertEquals(2, piece.getClaiming().getSequence().getStage());
+    assertEquals(claimSequenceId, piece.getClaim().getSequence().getId());
+    assertEquals(2, piece.getClaim().getSequence().getStage());
     assertEquals("internal", piece.getInternalNote());
     assertEquals("external", piece.getExternalNote());
   }
 
   @Test
   void testUpdatePieceStatusWithHolderKeepsClaimSequenceWhenStatusUnchanged() {
-    var claiming = new PieceClaiming().withSequence(new PieceClaimingSequence().withId(UUID.randomUUID().toString()).withStage(1));
+    var claim = new PieceClaim().withSequence(new PieceClaimSequence().withId(UUID.randomUUID().toString()).withStage(1));
     Piece piece = new Piece().withId(UUID.randomUUID().toString()).withReceivingStatus(Piece.ReceivingStatus.CLAIM_SENT)
-      .withClaiming(claiming);
+      .withClaim(claim);
     var stage = new ClaimSequenceStage().withStage(2).withInterval(45).withDeliveryType(ClaimSequenceStage.DeliveryType.MANUAL);
     PieceBatchStatusUpdateHolder holder = new PieceBatchStatusUpdateHolder(Piece.ReceivingStatus.CLAIM_SENT,
       30, null, null, List.of(piece), UUID.randomUUID().toString())
-      .withClaimResolutions(Map.of(piece.getId(), PieceClaimResolution.ofStage(claiming.getSequence().getId(), 2, stage)));
+      .withClaimResolutions(Map.of(piece.getId(), PieceClaimResolution.ofStage(claim.getSequence().getId(), 2, stage)));
 
     boolean statusChanged = PieceUtil.updatePieceStatus(piece, holder);
 
     assertFalse(statusChanged);
-    assertSame(claiming, piece.getClaiming());
-    assertEquals(1, piece.getClaiming().getSequence().getStage());
+    assertSame(claim, piece.getClaim());
+    assertEquals(1, piece.getClaim().getSequence().getStage());
     assertEquals(30, piece.getClaimingInterval());
   }
 
   @Test
-  void testUpdatePieceStatusWithHolderWithoutSequenceKeepsRequestIntervalAndClaiming() {
-    var claiming = new PieceClaiming().withSequence(new PieceClaimingSequence().withId(UUID.randomUUID().toString()).withStage(1));
-    Piece piece = new Piece().withId(UUID.randomUUID().toString()).withReceivingStatus(Piece.ReceivingStatus.LATE).withClaiming(claiming);
+  void testUpdatePieceStatusWithHolderWithoutSequenceKeepsRequestIntervalAndClaim() {
+    var claim = new PieceClaim().withSequence(new PieceClaimSequence().withId(UUID.randomUUID().toString()).withStage(1));
+    Piece piece = new Piece().withId(UUID.randomUUID().toString()).withReceivingStatus(Piece.ReceivingStatus.LATE).withClaim(claim);
     PieceBatchStatusUpdateHolder holder = new PieceBatchStatusUpdateHolder(Piece.ReceivingStatus.CLAIM_SENT,
       30, null, null, List.of(piece), UUID.randomUUID().toString())
       .withClaimResolutions(Map.of(piece.getId(), PieceClaimResolution.WITHOUT_SEQUENCE));
@@ -101,7 +101,7 @@ public class PieceUtilTest {
 
     assertTrue(statusChanged);
     assertEquals(30, piece.getClaimingInterval());
-    assertSame(claiming, piece.getClaiming());
+    assertSame(claim, piece.getClaim());
   }
 
   @Test
@@ -114,7 +114,7 @@ public class PieceUtilTest {
 
     assertTrue(statusChanged);
     assertEquals(30, piece.getClaimingInterval());
-    assertNull(piece.getClaiming());
+    assertNull(piece.getClaim());
   }
 
   @ParameterizedTest

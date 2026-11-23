@@ -6,8 +6,8 @@ import java.util.Optional;
 import org.folio.rest.acq.model.ClaimSequence;
 import org.folio.rest.acq.model.ClaimSequenceStage;
 import org.folio.rest.jaxrs.model.Piece;
-import org.folio.rest.jaxrs.model.PieceClaiming;
-import org.folio.rest.jaxrs.model.PieceClaimingSequence;
+import org.folio.rest.jaxrs.model.PieceClaim;
+import org.folio.rest.jaxrs.model.PieceClaimSequence;
 
 /**
  * Works out the claim sequence stage a piece is claimed at next. Pure function, no I/O.
@@ -46,7 +46,7 @@ public final class ClaimSequenceStageResolver {
    */
   public static StageResolution resolve(Piece piece, ClaimSequence sequence) {
     var stages = sequence.getStages();
-    var state = Optional.ofNullable(piece.getClaiming()).map(PieceClaiming::getSequence).orElse(null);
+    var state = Optional.ofNullable(piece.getClaim()).map(PieceClaim::getSequence).orElse(null);
     var next = isSameSequence(state, sequence) ? state.getStage() + 1 : 1;
     if (next <= stages.size()) {
       return StageResolution.next(sequence.getId(), next, stages.get(next - 1));
@@ -57,7 +57,7 @@ public final class ClaimSequenceStageResolver {
     return StageResolution.completed(sequence.getId());
   }
 
-  private static boolean isSameSequence(PieceClaimingSequence state, ClaimSequence sequence) {
+  private static boolean isSameSequence(PieceClaimSequence state, ClaimSequence sequence) {
     return state != null && state.getStage() != null && Objects.equals(sequence.getId(), state.getId());
   }
 

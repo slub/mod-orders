@@ -28,8 +28,8 @@ import org.folio.rest.acq.model.ClaimSequenceStage.TransmissionMethod;
 import org.folio.rest.core.exceptions.HttpException;
 import org.folio.rest.core.models.RequestContext;
 import org.folio.rest.jaxrs.model.Piece;
-import org.folio.rest.jaxrs.model.PieceClaiming;
-import org.folio.rest.jaxrs.model.PieceClaimingSequence;
+import org.folio.rest.jaxrs.model.PieceClaim;
+import org.folio.rest.jaxrs.model.PieceClaimSequence;
 import org.folio.service.ClaimSequenceService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -65,8 +65,8 @@ public class ClaimResolutionServiceTest {
     var manualSequence = sequence(true, stage(DeliveryType.MANUAL, null, 14));
     var ftpSequence = sequence(true, stage(DeliveryType.MANUAL, null, 14), stage(DeliveryType.INTEGRATION, TransmissionMethod.FTP, 30));
     var manualPiece = latePiece();
-    var ftpPiece = latePiece().withClaiming(claimingAt(ftpSequence.getId(), 1));
-    var ftpPiece2 = latePiece().withClaiming(claimingAt(ftpSequence.getId(), 1));
+    var ftpPiece = latePiece().withClaim(claimingAt(ftpSequence.getId(), 1));
+    var ftpPiece2 = latePiece().withClaim(claimingAt(ftpSequence.getId(), 1));
     var noSequencePiece = latePiece();
     when(claimSequenceService.getClaimSequencesByIds(any(), any()))
       .thenReturn(Future.succeededFuture(List.of(manualSequence, ftpSequence)));
@@ -109,7 +109,7 @@ public class ClaimResolutionServiceTest {
     var activeSequence = sequence(true, stage(DeliveryType.MANUAL, null, 14));
     var inactiveSequence = sequence(false, stage(DeliveryType.MANUAL, null, 14));
     var missingSequenceId = UUID.randomUUID().toString();
-    var completedPiece = latePiece().withClaiming(claimingAt(activeSequence.getId(), 1));
+    var completedPiece = latePiece().withClaim(claimingAt(activeSequence.getId(), 1));
     var inactivePiece = latePiece();
     var missingPiece = latePiece();
     var okPiece = latePiece();
@@ -141,8 +141,8 @@ public class ClaimResolutionServiceTest {
     return new Piece().withId(UUID.randomUUID().toString()).withReceivingStatus(Piece.ReceivingStatus.LATE);
   }
 
-  private static PieceClaiming claimingAt(String claimSequenceId, int stage) {
-    return new PieceClaiming().withSequence(new PieceClaimingSequence().withId(claimSequenceId).withStage(stage));
+  private static PieceClaim claimingAt(String claimSequenceId, int stage) {
+    return new PieceClaim().withSequence(new PieceClaimSequence().withId(claimSequenceId).withStage(stage));
   }
 
   private static ClaimSequenceStage stage(DeliveryType deliveryType, TransmissionMethod transmissionMethod, int interval) {
