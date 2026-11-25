@@ -57,6 +57,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -543,6 +544,38 @@ public class InventoryManagerIT {
 
     verify(inventoryItemManager).createMissingElectronicItems(any(CompositePurchaseOrder.class), any(PoLine.class), any(Piece.class), eq(1), eq(requestContext));
     assertEquals(expItemId, actItemId);
+  }
+
+  @Test
+  void testShouldSetExpectedActivationAsReceiptDateOfElectronicPiecesWithItems() {
+    CompositePurchaseOrder order = getMockAsJson(ORDER_PATH).mapTo(CompositePurchaseOrder.class);
+    PoLine line = getMockAsJson(COMPOSITE_LINES_PATH, LINE_ID).mapTo(PoLine.class);
+    Date expectedActivation = new Date(System.currentTimeMillis() + 86_400_000L);
+    Eresource eresource = new Eresource().withMaterialType(line.getPhysical().getMaterialType())
+      .withCreateInventory(Eresource.CreateInventory.INSTANCE_HOLDING_ITEM)
+      .withExpectedActivation(expectedActivation);
+    line.setPhysical(null);
+    line.setEresource(eresource);
+    line.setOrderFormat(PoLine.OrderFormat.ELECTRONIC_RESOURCE);
+    line.setCheckinItems(false);
+    Location location = new Location().withHoldingId(HOLDING_ID).withQuantityElectronic(2).withQuantity(2);
+    line.setLocations(List.of(location));
+    List<String> createdItemIds = List.of(UUID.randomUUID().toString(), UUID.randomUUID().toString());
+
+    doReturn(succeededFuture(requestContext)).when(consortiumConfigurationService)
+      .cloneRequestContextIfNeeded(eq(requestContext), any(Location.class));
+    doReturn(succeededFuture(new JsonObject())).when(restClient).getAsJsonObject(any(RequestEntry.class), eq(requestContext));
+    doReturn(succeededFuture(createdItemIds)).when(inventoryItemManager).createMissingElectronicItems(any(CompositePurchaseOrder.class),
+      any(PoLine.class), any(Piece.class), eq(2), eq(requestContext));
+
+    List<Piece> pieces = inventoryItemManager.handleItemRecords(order, line, location, requestContext).result();
+
+    assertEquals(2, pieces.size());
+    pieces.forEach(piece -> {
+      assertEquals(Piece.Format.ELECTRONIC, piece.getFormat());
+      assertEquals(HOLDING_ID, piece.getHoldingId());
+      assertEquals(expectedActivation, piece.getReceiptDate());
+    });
   }
 
   @Test

@@ -330,10 +330,11 @@ public class OpenCompositeOrderPieceServiceIT {
 
   @ParameterizedTest
   @SuppressWarnings("unchecked")
-  @CsvSource(value = {"Electronic Resource:Instance:2:3:Electronic",
-                      "Electronic Resource:None:2:3:Electronic"}, delimiter = ':')
+  @CsvSource(value = {"Electronic Resource:Instance:2:3:Electronic:true",
+                      "Electronic Resource:None:2:3:Electronic:true",
+                      "Electronic Resource:Instance:2:3:Electronic:false"}, delimiter = ':')
   void shouldCreatePieceWithLocationReferenceIfElectronicLineContainsLocationAndInventoryIsInstanceOrNoneAndNoCreatedPieces(
-        String lineType, String createInventory, int qty1, int qty2, String pieceFormat) {
+        String lineType, String createInventory, int qty1, int qty2, String pieceFormat, boolean hasExpectedActivation) {
     //given
     String orderId = UUID.randomUUID().toString();
     String lineId = UUID.randomUUID().toString();
@@ -343,7 +344,9 @@ public class OpenCompositeOrderPieceServiceIT {
     Location location1 = new Location().withLocationId(locationId1).withQuantityElectronic(qty1).withQuantity(qty1);
     Location location2 = new Location().withLocationId(locationId2).withQuantityElectronic(qty2).withQuantity(qty2);
     Cost cost = new Cost().withQuantityElectronic(qty1 + qty2);
-    Eresource eresource = new Eresource().withCreateInventory(Eresource.CreateInventory.fromValue(createInventory));
+    Date expectedActivation = hasExpectedActivation ? new Date(System.currentTimeMillis() + 86_400_000L) : null;
+    Eresource eresource = new Eresource().withCreateInventory(Eresource.CreateInventory.fromValue(createInventory))
+      .withExpectedActivation(expectedActivation);
     PoLine line = new PoLine().withId(lineId).withPurchaseOrderId(orderId)
       .withCost(cost).withLocations(List.of(location1, location2))
       .withIsPackage(false).withEresource(eresource)
@@ -380,7 +383,7 @@ public class OpenCompositeOrderPieceServiceIT {
       assertEquals(lineId, piece.getPoLineId());
       assertEquals(titleId, piece.getTitleId());
       assertEquals(Piece.Format.fromValue(pieceFormat), piece.getFormat());
-      assertNull(piece.getReceiptDate());
+      assertEquals(expectedActivation, piece.getReceiptDate());
     });
     List<Piece> piecesLoc2 =  createdPieces.stream().filter(piece -> piece.getLocationId().equals(locationId2))
       .toList();
@@ -391,7 +394,7 @@ public class OpenCompositeOrderPieceServiceIT {
       assertEquals(lineId, piece.getPoLineId());
       assertEquals(titleId, piece.getTitleId());
       assertEquals(Piece.Format.fromValue(pieceFormat), piece.getFormat());
-      assertNull(piece.getReceiptDate());
+      assertEquals(expectedActivation, piece.getReceiptDate());
     });
   }
 
@@ -411,7 +414,9 @@ public class OpenCompositeOrderPieceServiceIT {
     Location location1 = new Location().withLocationId(locationId1).withQuantityElectronic(elecQty1).withQuantity(elecQty1);
     Location location2 = new Location().withLocationId(locationId2).withQuantityPhysical(physQty2).withQuantity(physQty2);
     Cost cost = new Cost().withQuantityElectronic(elecQty1 + physQty2);
-    Eresource eresource = new Eresource().withCreateInventory(Eresource.CreateInventory.fromValue(elecCreateInventory));
+    Date expectedActivation = new Date(System.currentTimeMillis() + 86_400_000L);
+    Eresource eresource = new Eresource().withCreateInventory(Eresource.CreateInventory.fromValue(elecCreateInventory))
+      .withExpectedActivation(expectedActivation);
     Physical physical = new Physical()
       .withCreateInventory(Physical.CreateInventory.fromValue(physCreateInventory))
       .withExpectedReceiptDate(expectedReceiptDate);
@@ -451,7 +456,7 @@ public class OpenCompositeOrderPieceServiceIT {
       assertEquals(lineId, piece.getPoLineId());
       assertEquals(titleId, piece.getTitleId());
       assertEquals(Piece.Format.ELECTRONIC, piece.getFormat());
-      assertNull(piece.getReceiptDate());
+      assertEquals(expectedActivation, piece.getReceiptDate());
     });
     List<Piece> piecesLoc2 =  createdPieces.stream().filter(piece -> piece.getLocationId().equals(locationId2))
       .toList();
@@ -481,7 +486,9 @@ public class OpenCompositeOrderPieceServiceIT {
     Location location1 = new Location().withLocationId(locationId1).withQuantityElectronic(elecQty1).withQuantity(elecQty1);
     Location location2 = new Location().withHoldingId(holdingId).withQuantityPhysical(physQty2).withQuantity(physQty2);
     Cost cost = new Cost().withQuantityElectronic(elecQty1 + physQty2);
-    Eresource eresource = new Eresource().withCreateInventory(Eresource.CreateInventory.fromValue(elecCreateInventory));
+    Date expectedActivation = new Date(System.currentTimeMillis() + 86_400_000L);
+    Eresource eresource = new Eresource().withCreateInventory(Eresource.CreateInventory.fromValue(elecCreateInventory))
+      .withExpectedActivation(expectedActivation);
     Physical physical = new Physical()
       .withCreateInventory(Physical.CreateInventory.fromValue(physCreateInventory))
       .withExpectedReceiptDate(expectedReceiptDate);
@@ -521,7 +528,7 @@ public class OpenCompositeOrderPieceServiceIT {
       assertEquals(lineId, piece.getPoLineId());
       assertEquals(titleId, piece.getTitleId());
       assertEquals(Piece.Format.ELECTRONIC, piece.getFormat());
-      assertNull(piece.getReceiptDate());
+      assertEquals(expectedActivation, piece.getReceiptDate());
     });
     List<Piece> piecesLoc2 =  createdPieces.stream().filter(piece -> holdingId.equals(piece.getHoldingId()))
       .toList();
@@ -567,7 +574,9 @@ public class OpenCompositeOrderPieceServiceIT {
 
     Cost cost = new Cost().withQuantityElectronic(elecQty1 + physQty2);
 
-    Eresource eresource = new Eresource().withCreateInventory(Eresource.CreateInventory.fromValue(elecCreateInventory));
+    Date expectedActivation = new Date(System.currentTimeMillis() + 86_400_000L);
+    Eresource eresource = new Eresource().withCreateInventory(Eresource.CreateInventory.fromValue(elecCreateInventory))
+      .withExpectedActivation(expectedActivation);
     Physical physical = new Physical()
       .withCreateInventory(Physical.CreateInventory.fromValue(physCreateInventory))
       .withExpectedReceiptDate(expectedReceiptDate);
@@ -604,7 +613,7 @@ public class OpenCompositeOrderPieceServiceIT {
     piecesLocElec.forEach(piece -> {
       assertEquals(lineId, piece.getPoLineId());
       assertEquals(titleId, piece.getTitleId());
-      assertNull(piece.getReceiptDate());
+      assertEquals(expectedActivation, piece.getReceiptDate());
       if (Eresource.CreateInventory.INSTANCE_HOLDING_ITEM == Eresource.CreateInventory.fromValue(elecCreateInventory)) {
         assertEquals(holdingId, piece.getHoldingId());
         assertNotNull(piece.getItemId());
