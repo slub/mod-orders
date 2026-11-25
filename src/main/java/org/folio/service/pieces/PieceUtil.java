@@ -133,9 +133,10 @@ public class PieceUtil {
   }
 
   public static Date getExpectedReceiptDate(Piece.Format pieceFormat, PoLine poLine) {
-    return (pieceFormat != Piece.Format.ELECTRONIC && poLine.getPhysical() != null)
-      ? poLine.getPhysical().getExpectedReceiptDate()
-      : null;
+    if (pieceFormat == Piece.Format.ELECTRONIC) {
+      return poLine.getEresource() != null ? poLine.getEresource().getExpectedActivation() : null;
+    }
+    return poLine.getPhysical() != null ? poLine.getPhysical().getExpectedReceiptDate() : null;
   }
 
   public static List<Location> getPiecesLocations(List<Piece> pieces) {

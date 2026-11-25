@@ -2,6 +2,7 @@ package org.folio.service.pieces;
 
 import org.folio.CopilotGenerated;
 import org.folio.models.pieces.PieceBatchStatusUpdateHolder;
+import org.folio.rest.jaxrs.model.Eresource;
 import org.folio.rest.jaxrs.model.Physical;
 import org.folio.rest.jaxrs.model.Piece;
 import org.folio.rest.jaxrs.model.PoLine;
@@ -174,8 +175,32 @@ public class PieceUtilTest {
   }
 
   @Test
-  void returnsNullWhenPieceFormatIsNotPhysical() {
+  void returnsExpectedActivationWhenPieceFormatIsElectronic() {
+    Date expectedReceiptDate = new Date(1_000_000L);
+    Date expectedActivation = new Date(2_000_000L);
+    PoLine poLine = new PoLine()
+      .withPhysical(new Physical().withExpectedReceiptDate(expectedReceiptDate))
+      .withEresource(new Eresource().withExpectedActivation(expectedActivation));
+
+    Date result = PieceUtil.getExpectedReceiptDate(Piece.Format.ELECTRONIC, poLine);
+
+    assertEquals(expectedActivation, result);
+  }
+
+  @Test
+  void returnsNullWhenPieceFormatIsElectronicAndEresourceIsNull() {
     PoLine poLine = new PoLine().withPhysical(new Physical().withExpectedReceiptDate(new Date()));
+
+    Date result = PieceUtil.getExpectedReceiptDate(Piece.Format.ELECTRONIC, poLine);
+
+    assertNull(result);
+  }
+
+  @Test
+  void returnsNullWhenPieceFormatIsElectronicAndExpectedActivationIsNull() {
+    PoLine poLine = new PoLine()
+      .withPhysical(new Physical().withExpectedReceiptDate(new Date()))
+      .withEresource(new Eresource());
 
     Date result = PieceUtil.getExpectedReceiptDate(Piece.Format.ELECTRONIC, poLine);
 
